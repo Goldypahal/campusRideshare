@@ -7,6 +7,17 @@ import { Search, Plus, Users, Shield } from "lucide-react";
 export default function Home() {
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* CTA Section */}
+      <section className="text-center bg-card rounded-3xl p-8 border border-border">
+        <h3 className="text-2xl font-bold text-card-foreground mb-4">Ready to Start Riding?</h3>
+        <p className="text-muted-foreground mb-6">Join thousands of university students sharing safe, affordable rides</p>
+        <Link href="/register">
+          <Button size="lg" data-testid="button-join-uniride">
+            Join UniRide Today
+          </Button>
+        </Link>
+      </section>
+
       {/* Hero Section */}
       <section className="text-center space-y-6">
         <div className="relative h-64 rounded-3xl overflow-hidden">
@@ -109,17 +120,6 @@ export default function Home() {
 
       {/* Safety Features */}
       <SafetyFeatures />
-
-      {/* CTA Section */}
-      <section className="text-center bg-card rounded-3xl p-8 border border-border">
-        <h3 className="text-2xl font-bold text-card-foreground mb-4">Ready to Start Riding?</h3>
-        <p className="text-muted-foreground mb-6">Join thousands of university students sharing safe, affordable rides</p>
-        <Link href="/register">
-          <Button size="lg" data-testid="button-join-uniride">
-            Join UniRide Today
-          </Button>
-        </Link>
-      </section>
     </main>
   );
 }
