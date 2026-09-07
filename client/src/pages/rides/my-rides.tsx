@@ -7,6 +7,24 @@ import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { MapPin, Calendar, Clock, Users, Car, MessageCircle, Check, X } from "lucide-react";
 
+interface Ride {
+  id: string;
+  origin: string;
+  destination: string;
+  date: string;
+  time: string;
+  availableSeats: number;
+  costPerPerson: number;
+  status: string;
+}
+
+interface RideRequest {
+  id: string;
+  ride?: Ride;
+  driver?: { fullName: string };
+  status: string;
+}
+
 export default function MyRides() {
   const [, navigate] = useLocation();
 
@@ -15,22 +33,22 @@ export default function MyRides() {
     return null;
   }
 
-  const { data: myOffers = [], isLoading: offersLoading } = useQuery({
+  const { data: myOffers = [], isLoading: offersLoading } = useQuery<Ride[]>({
     queryKey: ['/api/rides/my'],
     queryFn: async () => {
       const response = await fetch('/api/rides/my', {
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders() as Record<string, string>,
       });
       if (!response.ok) throw new Error('Failed to fetch my rides');
       return response.json();
     },
   });
 
-  const { data: myRequests = [], isLoading: requestsLoading } = useQuery({
+  const { data: myRequests = [], isLoading: requestsLoading } = useQuery<RideRequest[]>({
     queryKey: ['/api/ride-requests/my'],
     queryFn: async () => {
       const response = await fetch('/api/ride-requests/my', {
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders() as Record<string, string>,
       });
       if (!response.ok) throw new Error('Failed to fetch my requests');
       return response.json();

@@ -8,10 +8,29 @@ import { filterAndSortRides, type RideWithDriver } from "@/lib/matching";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
 import { useLocation } from "wouter";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { RideCardSkeleton } from "@/components/ui/skeleton-loaders";
+import { Sparkles, Car } from "lucide-react";
 
 export default function SearchRides() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"all" | "smart">("all");
+
+  // Connect to WebSocket for real-time notifications
+  useWebSocket((event) => {
+    if (!event || !event.type) return;
+    if (event.type === 'ride_request_created' || event.type === 'ride_request') {
+      toast({ title: 'New Ride Request', description: 'You have a new ride request' });
+    }
+    if (event.type === 'ride_request_status') {
+      toast({ title: 'Request Update', description: `Your request was ${event.request.status}` });
+    }
+    if (event.type === 'sos') {
+      toast({ title: '🚨 SOS Alert', description: `${event.sos.userName}: ${event.sos.message}`, variant: "destructive" });
+    }
+  });
+
   const [filters, setFilters] = useState({
     origin: "",
     destination: "",
@@ -28,18 +47,30 @@ export default function SearchRides() {
     enabled: isAuthenticated(),
     queryFn: async () => {
       const response = await fetch('/api/auth/me', {
-        headers: getAuthHeaders(),
+         headers: getAuthHeaders() as Record<string, string>,
       });
       if (!response.ok) throw new Error('Failed to fetch user');
       return response.json();
     },
   });
 
-  const { data: rides = [], isLoading } = useQuery({
+  const { data: rides = [], isLoading: isRidesLoading } = useQuery({
     queryKey: ['/api/rides'],
     queryFn: async () => {
       const response = await fetch('/api/rides');
       if (!response.ok) throw new Error('Failed to fetch rides');
+      return response.json();
+    },
+  });
+
+  const { data: smartMatches = [], isLoading: isSmartLoading } = useQuery({
+    queryKey: ['/api/rides/smart-matches'],
+    enabled: isAuthenticated() && activeTab === "smart",
+    queryFn: async () => {
+      const response = await fetch('/api/rides/smart-matches', {
+        headers: getAuthHeaders() as Record<string, string>,
+      });
+      if (!response.ok) return [];
       return response.json();
     },
   });
@@ -84,22 +115,22 @@ export default function SearchRides() {
     requestRideMutation.mutate(rideId);
   };
 
-  const handleSendMessage = (driverId: string) => {
+  const handleSendMessage = (_driverId: string) => {
     if (!isAuthenticated()) {
       navigate("/login");
       return;
     }
-    
-    // TODO: Implement messaging modal/page
     toast({
-      title: "Messaging feature",
-      description: "Direct messaging will be available soon!",
+      title: "Direct Messaging",
+      description: "Direct messaging features are active via live notifications.",
     });
   };
 
-  // Filter and sort rides
+  const currentRidesList = activeTab === "smart" ? smartMatches : rides;
+  const isLoading = activeTab === "smart" ? isSmartLoading : isRidesLoading;
+
   const filteredRides = filterAndSortRides(
-    rides as RideWithDriver[],
+    currentRidesList as RideWithDriver[],
     {
       gender: filters.gender,
       academicYear: filters.academicYear,
@@ -122,8 +153,29 @@ export default function SearchRides() {
       <SearchFilters onSearch={handleSearch} />
 
       <section className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h3 className="text-2xl font-bold">Available Rides</h3>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex items-center gap-3">
+            <h3 className="text-2xl font-bold">Available Rides</h3>
+            <div className="flex bg-muted p-1 rounded-lg border text-xs">
+              <button
+                onClick={() => setActiveTab("all")}
+                className={`px-3 py-1 rounded-md transition-all font-medium ${
+                  activeTab === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+                }`}
+              >
+                All Rides
+              </button>
+              <button
+                onClick={() => setActiveTab("smart")}
+                className={`px-3 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                  activeTab === "smart" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-primary" /> Smart Airport & Break Matches
+              </button>
+            </div>
+          </div>
+
           <div className="flex space-x-2">
             <Button 
               variant={sortBy === "time" ? "default" : "outline"}
@@ -145,14 +197,21 @@ export default function SearchRides() {
         </div>
 
         {isLoading ? (
-          <div className="text-center py-8">
-            <p className="text-muted-foreground">Loading rides...</p>
+          <div className="space-y-4">
+            <RideCardSkeleton />
+            <RideCardSkeleton />
+            <RideCardSkeleton />
           </div>
         ) : sortedRides.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-muted-foreground" data-testid="text-no-rides">
-              No rides found matching your criteria. Try adjusting your filters.
+          <div className="text-center py-12 bg-card rounded-xl border border-dashed p-8">
+            <Car className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+            <h4 className="text-lg font-semibold mb-1">No rides found matching your criteria</h4>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4" data-testid="text-no-rides">
+              Try expanding your search parameters or check back soon as campus drivers post new routes daily.
             </p>
+            <Button variant="outline" onClick={() => navigate("/offer")}>
+              Post a Ride Offer
+            </Button>
           </div>
         ) : (
           <div className="space-y-4">

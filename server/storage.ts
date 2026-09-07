@@ -1,4 +1,22 @@
-import { type User, type InsertUser, type Ride, type InsertRide, type RideRequest, type InsertRideRequest, type Message, type InsertMessage, type Rating, type InsertRating } from "@shared/schema";
+import {
+  type User,
+  type InsertUser,
+  type Ride,
+  type InsertRide,
+  type RideRequest,
+  type InsertRideRequest,
+  type Message,
+  type InsertMessage,
+  type Rating,
+  type InsertRating,
+  users,
+  rides,
+  rideRequests,
+  messages,
+  ratings,
+} from "@shared/schema";
+import { db } from "./db";
+import { eq, or, and, asc, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -11,7 +29,7 @@ export interface IStorage {
   // Ride methods
   createRide(ride: InsertRide & { driverId: string }): Promise<Ride>;
   getRide(id: string): Promise<Ride | undefined>;
-  getRides(): Promise<Ride[]>;
+  getRides(offset?: number, limit?: number): Promise<Ride[]>;
   updateRide(id: string, ride: Partial<Ride>): Promise<Ride | undefined>;
   getRidesByDriver(driverId: string): Promise<Ride[]>;
 
@@ -24,12 +42,160 @@ export interface IStorage {
 
   // Message methods
   createMessage(message: InsertMessage & { fromUserId: string }): Promise<Message>;
-  getMessagesBetweenUsers(user1Id: string, user2Id: string): Promise<Message[]>;
+  getMessagesBetweenUsers(user1Id: string, user2Id: string, offset?: number, limit?: number): Promise<Message[]>;
 
   // Rating methods
   createRating(rating: InsertRating & { fromUserId: string }): Promise<Rating>;
   getRatingsByUser(userId: string): Promise<Rating[]>;
   updateUserRating(userId: string): Promise<void>;
+}
+
+export class DatabaseStorage implements IStorage {
+  async getUser(id: string): Promise<User | undefined> {
+    if (!db) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    if (!db) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    if (!db) throw new Error("Database not connected");
+    const [user] = await db.insert(users).values({
+      ...insertUser,
+      homeAirport: insertUser.homeAirport ?? null,
+      housingZone: insertUser.housingZone ?? null,
+    }).returning();
+    return user;
+  }
+
+  async updateUser(id: string, updateData: Partial<User>): Promise<User | undefined> {
+    if (!db) return undefined;
+    const [updatedUser] = await db.update(users).set(updateData).where(eq(users.id, id)).returning();
+    return updatedUser;
+  }
+
+  async createRide(rideData: InsertRide & { driverId: string }): Promise<Ride> {
+    if (!db) throw new Error("Database not connected");
+    const [ride] = await db.insert(rides).values({
+      ...rideData,
+      vehicle: rideData.vehicle ?? null,
+      notes: rideData.notes ?? null,
+      isRecurring: rideData.isRecurring ?? false,
+      recurrencePattern: rideData.recurrencePattern ?? null,
+    }).returning();
+    return ride;
+  }
+
+  async getRide(id: string): Promise<Ride | undefined> {
+    if (!db) return undefined;
+    const [ride] = await db.select().from(rides).where(eq(rides.id, id));
+    return ride;
+  }
+
+  async getRides(offset: number = 0, limit: number = 50): Promise<Ride[]> {
+    if (!db) return [];
+    return db.select().from(rides)
+      .where(eq(rides.status, "active"))
+      .orderBy(desc(rides.createdAt))
+      .offset(offset)
+      .limit(limit);
+  }
+
+  async updateRide(id: string, updateData: Partial<Ride>): Promise<Ride | undefined> {
+    if (!db) return undefined;
+    const [updatedRide] = await db.update(rides).set(updateData).where(eq(rides.id, id)).returning();
+    return updatedRide;
+  }
+
+  async getRidesByDriver(driverId: string): Promise<Ride[]> {
+    if (!db) return [];
+    return db.select().from(rides).where(eq(rides.driverId, driverId)).orderBy(desc(rides.createdAt));
+  }
+
+  async createRideRequest(requestData: InsertRideRequest & { passengerId: string }): Promise<RideRequest> {
+    if (!db) throw new Error("Database not connected");
+    const [request] = await db.insert(rideRequests).values({
+      ...requestData,
+      message: requestData.message ?? null,
+    }).returning();
+    return request;
+  }
+
+  async getRideRequest(id: string): Promise<RideRequest | undefined> {
+    if (!db) return undefined;
+    const [request] = await db.select().from(rideRequests).where(eq(rideRequests.id, id));
+    return request;
+  }
+
+  async getRideRequestsByRide(rideId: string): Promise<RideRequest[]> {
+    if (!db) return [];
+    return db.select().from(rideRequests).where(eq(rideRequests.rideId, rideId));
+  }
+
+  async getRideRequestsByPassenger(passengerId: string): Promise<RideRequest[]> {
+    if (!db) return [];
+    return db.select().from(rideRequests).where(eq(rideRequests.passengerId, passengerId)).orderBy(desc(rideRequests.createdAt));
+  }
+
+  async updateRideRequest(id: string, updateData: Partial<RideRequest>): Promise<RideRequest | undefined> {
+    if (!db) return undefined;
+    const [updatedRequest] = await db.update(rideRequests).set(updateData).where(eq(rideRequests.id, id)).returning();
+    return updatedRequest;
+  }
+
+  async createMessage(messageData: InsertMessage & { fromUserId: string }): Promise<Message> {
+    if (!db) throw new Error("Database not connected");
+    const [message] = await db.insert(messages).values({
+      ...messageData,
+      rideId: messageData.rideId ?? null,
+    }).returning();
+    return message;
+  }
+
+  async getMessagesBetweenUsers(user1Id: string, user2Id: string, offset: number = 0, limit: number = 100): Promise<Message[]> {
+    if (!db) return [];
+    return db.select().from(messages).where(
+      or(
+        and(eq(messages.fromUserId, user1Id), eq(messages.toUserId, user2Id)),
+        and(eq(messages.fromUserId, user2Id), eq(messages.toUserId, user1Id))
+      )
+    )
+    .orderBy(asc(messages.createdAt))
+    .offset(offset)
+    .limit(limit);
+  }
+
+  async createRating(ratingData: InsertRating & { fromUserId: string }): Promise<Rating> {
+    if (!db) throw new Error("Database not connected");
+    const [rating] = await db.insert(ratings).values({
+      ...ratingData,
+      comment: ratingData.comment ?? null,
+    }).returning();
+    await this.updateUserRating(ratingData.toUserId);
+    return rating;
+  }
+
+  async getRatingsByUser(userId: string): Promise<Rating[]> {
+    if (!db) return [];
+    return db.select().from(ratings).where(eq(ratings.toUserId, userId));
+  }
+
+  async updateUserRating(userId: string): Promise<void> {
+    if (!db) return;
+    const userRatings = await this.getRatingsByUser(userId);
+    if (userRatings.length > 0) {
+      const avgRating = userRatings.reduce((sum, r) => sum + r.rating, 0) / userRatings.length;
+      await db.update(users).set({
+        rating: Math.round(avgRating * 10) / 10,
+        totalRides: userRatings.length,
+      }).where(eq(users.id, userId));
+    }
+  }
 }
 
 export class MemStorage implements IStorage {
@@ -63,6 +229,8 @@ export class MemStorage implements IStorage {
       isVerified: false,
       rating: 0,
       totalRides: 0,
+      homeAirport: insertUser.homeAirport ?? null,
+      housingZone: insertUser.housingZone ?? null,
       createdAt: new Date(),
     };
     this.users.set(id, user);
@@ -85,6 +253,10 @@ export class MemStorage implements IStorage {
       id,
       status: "active",
       createdAt: new Date(),
+      vehicle: rideData.vehicle ?? null,
+      notes: rideData.notes ?? null,
+      isRecurring: rideData.isRecurring ?? false,
+      recurrencePattern: rideData.recurrencePattern ?? null,
     };
     this.rides.set(id, ride);
     return ride;
@@ -94,8 +266,9 @@ export class MemStorage implements IStorage {
     return this.rides.get(id);
   }
 
-  async getRides(): Promise<Ride[]> {
-    return Array.from(this.rides.values()).filter(ride => ride.status === "active");
+  async getRides(offset: number = 0, limit: number = 50): Promise<Ride[]> {
+    const active = Array.from(this.rides.values()).filter(ride => ride.status === "active");
+    return active.slice(offset, offset + limit);
   }
 
   async updateRide(id: string, updateData: Partial<Ride>): Promise<Ride | undefined> {
@@ -118,6 +291,7 @@ export class MemStorage implements IStorage {
       id,
       status: "pending",
       createdAt: new Date(),
+      message: requestData.message ?? null,
     };
     this.rideRequests.set(id, rideRequest);
     return rideRequest;
@@ -150,18 +324,20 @@ export class MemStorage implements IStorage {
       ...messageData,
       id,
       createdAt: new Date(),
+      rideId: messageData.rideId ?? null,
     };
     this.messages.set(id, message);
     return message;
   }
 
-  async getMessagesBetweenUsers(user1Id: string, user2Id: string): Promise<Message[]> {
-    return Array.from(this.messages.values())
-      .filter(message => 
+  async getMessagesBetweenUsers(user1Id: string, user2Id: string, offset: number = 0, limit: number = 100): Promise<Message[]> {
+    const filtered = Array.from(this.messages.values())
+      .filter(message =>
         (message.fromUserId === user1Id && message.toUserId === user2Id) ||
         (message.fromUserId === user2Id && message.toUserId === user1Id)
       )
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+    return filtered.slice(offset, offset + limit);
   }
 
   async createRating(ratingData: InsertRating & { fromUserId: string }): Promise<Rating> {
@@ -170,6 +346,7 @@ export class MemStorage implements IStorage {
       ...ratingData,
       id,
       createdAt: new Date(),
+      comment: ratingData.comment ?? null,
     };
     this.ratings.set(id, rating);
     await this.updateUserRating(ratingData.toUserId);
@@ -192,4 +369,12 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+if (process.env.DATABASE_URL) {
+  console.log("💾 Storage Engine: DatabaseStorage (PostgreSQL / Neon ORM)");
+} else {
+  console.log("ℹ️ Storage Engine: MemStorage (Fallback in-memory storage)");
+}
+
+export const storage: IStorage = process.env.DATABASE_URL
+  ? new DatabaseStorage()
+  : new MemStorage();

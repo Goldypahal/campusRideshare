@@ -7,12 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { insertRideSchema, type InsertRide } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
+import { isAuthenticated } from "@/lib/auth";
 import { useLocation } from "wouter";
-import { MapPin, Calendar, Clock, Users, DollarSign, Car, FileText, Plus } from "lucide-react";
+import { MapPin, Calendar, Clock, DollarSign, Car, FileText, Plus, Repeat } from "lucide-react";
 
 export default function OfferRide() {
   const [, navigate] = useLocation();
@@ -29,6 +30,8 @@ export default function OfferRide() {
       costPerPerson: 0,
       vehicle: "",
       notes: "",
+      isRecurring: false,
+      recurrencePattern: "",
     },
   });
 
@@ -70,6 +73,8 @@ export default function OfferRide() {
     offerRideMutation.mutate(data);
   };
 
+  const isRecurring = form.watch("isRecurring");
+
   return (
     <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <Card className="rounded-3xl border border-border">
@@ -95,7 +100,7 @@ export default function OfferRide() {
                       <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-chart-1 h-4 w-4" />
                       <Input
                         type="text"
-                        placeholder="Starting point"
+                        placeholder="Starting point (e.g. North Campus, ATL Airport)"
                         className="pl-10"
                         {...form.register("origin")}
                         data-testid="input-origin"
@@ -109,7 +114,7 @@ export default function OfferRide() {
                       <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-chart-3 h-4 w-4" />
                       <Input
                         type="text"
-                        placeholder="Destination"
+                        placeholder="Destination (e.g. Student Union, West Quad)"
                         className="pl-10"
                         {...form.register("destination")}
                         data-testid="input-destination"
@@ -152,6 +157,35 @@ export default function OfferRide() {
                       <p className="text-destructive text-sm">{form.formState.errors.time.message}</p>
                     )}
                   </div>
+                </div>
+
+                <div className="bg-muted/50 p-4 rounded-xl space-y-3 border">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="isRecurring"
+                      checked={isRecurring}
+                      onCheckedChange={(checked) => form.setValue("isRecurring", !!checked)}
+                    />
+                    <label htmlFor="isRecurring" className="text-sm font-medium leading-none cursor-pointer flex items-center gap-1.5">
+                      <Repeat className="w-4 h-4 text-primary" /> Make this a recurring campus ride
+                    </label>
+                  </div>
+                  {isRecurring && (
+                    <Select
+                      value={form.watch("recurrencePattern") || ""}
+                      onValueChange={(val) => form.setValue("recurrencePattern", val)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select frequency" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Weekly - Mon/Wed/Fri">Weekly - Mon / Wed / Fri classes</SelectItem>
+                        <SelectItem value="Weekly - Tue/Thu">Weekly - Tue / Thu classes</SelectItem>
+                        <SelectItem value="Daily Commute">Daily Campus Commute</SelectItem>
+                        <SelectItem value="Weekend Return">Weekend Return Trip</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               </div>
               
@@ -202,15 +236,12 @@ export default function OfferRide() {
                     <Car className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
                     <Input
                       type="text"
-                      placeholder="Car make and model"
+                      placeholder="Car make and model (e.g. Honda Civic)"
                       className="pl-10"
                       {...form.register("vehicle")}
                       data-testid="input-vehicle"
                     />
                   </div>
-                  {form.formState.errors.vehicle && (
-                    <p className="text-destructive text-sm">{form.formState.errors.vehicle.message}</p>
-                  )}
                 </div>
                 
                 <div>
@@ -218,16 +249,13 @@ export default function OfferRide() {
                   <div className="relative">
                     <FileText className="absolute left-3 top-3 text-muted-foreground h-4 w-4" />
                     <Textarea
-                      placeholder="Any special instructions or preferences..."
+                      placeholder="Any special instructions, luggage limits, or music preferences..."
                       rows={3}
                       className="pl-10 resize-none"
                       {...form.register("notes")}
                       data-testid="textarea-notes"
                     />
                   </div>
-                  {form.formState.errors.notes && (
-                    <p className="text-destructive text-sm">{form.formState.errors.notes.message}</p>
-                  )}
                 </div>
               </div>
             </div>

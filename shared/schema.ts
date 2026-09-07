@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, real } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, real, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -14,7 +14,13 @@ export const users = pgTable("users", {
   isVerified: boolean("is_verified").default(false),
   rating: real("rating").default(0),
   totalRides: integer("total_rides").default(0),
+  homeAirport: text("home_airport"),
+  housingZone: text("housing_zone"),
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    emailIdx: index("users_email_idx").on(table.email),
+  };
 });
 
 export const rides = pgTable("rides", {
@@ -28,8 +34,16 @@ export const rides = pgTable("rides", {
   costPerPerson: real("cost_per_person").notNull(),
   vehicle: text("vehicle"),
   notes: text("notes"),
+  isRecurring: boolean("is_recurring").default(false),
+  recurrencePattern: text("recurrence_pattern"), // e.g. "Weekly - MWF", "Daily"
   status: text("status").default("active"), // active, full, completed, cancelled
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    driverIdx: index("rides_driver_idx").on(table.driverId),
+    routeIdx: index("rides_route_idx").on(table.origin, table.destination),
+    statusIdx: index("rides_status_idx").on(table.status),
+  };
 });
 
 export const rideRequests = pgTable("ride_requests", {
@@ -39,6 +53,11 @@ export const rideRequests = pgTable("ride_requests", {
   status: text("status").default("pending"), // pending, accepted, rejected
   message: text("message"),
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    rideIdx: index("ride_requests_ride_idx").on(table.rideId),
+    passengerIdx: index("ride_requests_passenger_idx").on(table.passengerId),
+  };
 });
 
 export const messages = pgTable("messages", {
@@ -48,6 +67,10 @@ export const messages = pgTable("messages", {
   rideId: varchar("ride_id").references(() => rides.id),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    chatIdx: index("messages_chat_idx").on(table.fromUserId, table.toUserId),
+  };
 });
 
 export const ratings = pgTable("ratings", {
@@ -58,6 +81,10 @@ export const ratings = pgTable("ratings", {
   rating: integer("rating").notNull(),
   comment: text("comment"),
   createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    toUserIdx: index("ratings_to_user_idx").on(table.toUserId),
+  };
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -73,6 +100,8 @@ export const insertUserSchema = createInsertSchema(users).omit({
   password: z.string().min(6, "Password must be at least 6 characters"),
   academicYear: z.enum(["Freshman", "Sophomore", "Junior", "Senior", "Graduate"]),
   gender: z.enum(["Female", "Male", "Non-binary", "Prefer not to say"]),
+  homeAirport: z.string().optional(),
+  housingZone: z.string().optional(),
 });
 
 export const insertRideSchema = createInsertSchema(rides).omit({
@@ -83,6 +112,8 @@ export const insertRideSchema = createInsertSchema(rides).omit({
 }).extend({
   availableSeats: z.number().min(1).max(4),
   costPerPerson: z.number().min(0),
+  isRecurring: z.boolean().optional(),
+  recurrencePattern: z.string().optional(),
 });
 
 export const insertRideRequestSchema = createInsertSchema(rideRequests).omit({
@@ -122,3 +153,4 @@ export type Message = typeof messages.$inferSelect;
 export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
 export type LoginData = z.infer<typeof loginSchema>;
+

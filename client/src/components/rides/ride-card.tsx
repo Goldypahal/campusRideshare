@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { VerificationBadge } from "@/components/safety/verification-badge";
-import { MapPin, Clock, Route, DollarSign, Car, Star, MessageCircle } from "lucide-react";
+import { MapPin, Clock, DollarSign, Car, Star, MessageCircle, ArrowRight, Repeat } from "lucide-react";
 import { RideWithDriver } from "@/lib/matching";
 
 interface RideCardProps {
@@ -16,19 +16,22 @@ interface RideCardProps {
 export default function RideCard({ ride, onRequestRide, onSendMessage, currentUserId }: RideCardProps) {
   const isOwnRide = currentUserId === ride.driver.id;
   
-  const getMatchColor = (percentage: number) => {
-    if (percentage >= 90) return "bg-chart-2";
-    if (percentage >= 75) return "bg-chart-4";
-    if (percentage >= 60) return "bg-chart-3";
-    return "bg-chart-5";
+  const getMatchBadgeStyle = (percentage: number) => {
+    if (percentage >= 90) return "bg-primary text-primary-foreground";
+    if (percentage >= 75) return "bg-emerald-600 text-white";
+    return "bg-secondary text-secondary-foreground";
   };
 
   const formatTime = (time: string) => {
-    const [hours, minutes] = time.split(':');
-    const hour = parseInt(hours);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${minutes} ${ampm}`;
+    try {
+      const [hours, minutes] = time.split(':');
+      const hour = parseInt(hours);
+      const ampm = hour >= 12 ? 'PM' : 'AM';
+      const displayHour = hour % 12 || 12;
+      return `${displayHour}:${minutes} ${ampm}`;
+    } catch {
+      return time;
+    }
   };
 
   const formatDate = (date: string) => {
@@ -47,117 +50,119 @@ export default function RideCard({ ride, onRequestRide, onSendMessage, currentUs
   };
 
   return (
-    <Card className="rounded-2xl border border-border hover:shadow-lg transition-shadow" data-testid={`card-ride-${ride.id}`}>
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center space-x-4">
-            <Avatar className="w-12 h-12">
-              <AvatarFallback className="bg-primary text-primary-foreground">
+    <Card className="rounded-2xl border border-border bg-card shadow-sm hover:border-primary/50 transition-all" data-testid={`card-ride-${ride.id}`}>
+      <CardContent className="p-6 space-y-4">
+        
+        {/* Header: Driver Info & Match Score */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center space-x-3.5">
+            <Avatar className="w-12 h-12 border-2 border-primary/20">
+              <AvatarFallback className="bg-primary/10 text-primary font-bold">
                 {ride.driver.fullName.split(' ').map(n => n[0]).join('')}
               </AvatarFallback>
             </Avatar>
             <div>
               <div className="flex items-center space-x-2">
-                <h4 className="font-semibold text-card-foreground" data-testid={`text-driver-name-${ride.id}`}>
+                <h4 className="font-serif text-lg font-bold text-foreground" data-testid={`text-driver-name-${ride.id}`}>
                   {ride.driver.fullName}
                 </h4>
-                {ride.driver.isVerified && <VerificationBadge size="sm" showText={false} />}
+                <VerificationBadge isVerified={ride.driver.isVerified ?? true} size="sm" showText={false} />
               </div>
-              <p className="text-sm text-muted-foreground" data-testid={`text-driver-info-${ride.id}`}>
+              <p className="text-xs text-muted-foreground" data-testid={`text-driver-info-${ride.id}`}>
                 {ride.driver.academicYear} • {ride.driver.major}
               </p>
-              <div className="flex items-center space-x-2 mt-1">
-                <div className="flex text-yellow-500">
+              <div className="flex items-center space-x-1.5 mt-1">
+                <div className="flex text-amber-500">
                   {[...Array(5)].map((_, i) => (
                     <Star 
                       key={i} 
-                      className={`h-3 w-3 ${i < Math.floor(ride.driver.rating) ? 'fill-current' : ''}`} 
+                      className={`h-3 w-3 ${i < Math.floor(ride.driver.rating || 5) ? 'fill-current' : ''}`} 
                     />
                   ))}
                 </div>
                 <span className="text-xs text-muted-foreground" data-testid={`text-driver-rating-${ride.id}`}>
-                  {ride.driver.rating.toFixed(1)} ({ride.driver.totalRides} rides)
+                  {(ride.driver.rating || 5).toFixed(1)} ({ride.driver.totalRides || 0} rides)
                 </span>
               </div>
             </div>
           </div>
-          <div className="text-right">
+
+          <div className="text-right flex flex-col items-end gap-1">
             {ride.matchPercentage && (
-              <Badge className={`${getMatchColor(ride.matchPercentage)} text-white`} data-testid={`badge-match-${ride.id}`}>
+              <Badge className={`${getMatchBadgeStyle(ride.matchPercentage)} px-3 py-1 font-semibold text-xs rounded-full`} data-testid={`badge-match-${ride.id}`}>
                 {ride.matchPercentage}% Match
               </Badge>
             )}
-            <p className="text-sm text-muted-foreground mt-1" data-testid={`text-seats-${ride.id}`}>
-              {ride.availableSeats} seats available
-            </p>
+            <span className="text-xs text-muted-foreground font-medium" data-testid={`text-seats-${ride.id}`}>
+              {ride.availableSeats} seat{ride.availableSeats > 1 ? 's' : ''} left
+            </span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="flex items-center space-x-3">
-            <div className="bg-chart-1 p-2 rounded-lg">
-              <MapPin className="text-white h-4 w-4" />
+        {/* Route Details */}
+        <div className="bg-muted/40 p-4 rounded-xl border border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-center gap-1">
+              <div className="w-2.5 h-2.5 rounded-full bg-secondary"></div>
+              <div className="w-px h-6 border-l border-dashed border-secondary/50"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-primary"></div>
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">From</p>
-              <p className="font-medium text-card-foreground" data-testid={`text-origin-${ride.id}`}>
-                {ride.origin}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <div className="bg-chart-3 p-2 rounded-lg">
-              <MapPin className="text-white h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">To</p>
-              <p className="font-medium text-card-foreground" data-testid={`text-destination-${ride.id}`}>
-                {ride.destination}
-              </p>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground uppercase font-semibold">From</span>
+                <span className="font-serif font-bold text-foreground" data-testid={`text-origin-${ride.id}`}>{ride.origin}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground uppercase font-semibold">To</span>
+                <span className="font-serif font-bold text-foreground" data-testid={`text-destination-${ride.id}`}>{ride.destination}</span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <div className="bg-chart-4 p-2 rounded-lg">
-              <Clock className="text-white h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Time</p>
-              <p className="font-medium text-card-foreground" data-testid={`text-time-${ride.id}`}>
-                {formatDate(ride.date)}, {formatTime(ride.time)}
-              </p>
-            </div>
+
+          <div className="flex items-center gap-2 text-xs font-medium text-foreground bg-background px-3 py-2 rounded-lg border border-border/80 self-start sm:self-auto">
+            <Clock className="w-3.5 h-3.5 text-primary" />
+            <span data-testid={`text-time-${ride.id}`}>{formatDate(ride.date)}, {formatTime(ride.time)}</span>
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-              <DollarSign className="h-4 w-4" />
-              <span data-testid={`text-cost-${ride.id}`}>${ride.costPerPerson} split</span>
+        {/* Footer: Price, Vehicle & Actions */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1 font-semibold text-primary text-base font-serif">
+              <DollarSign className="h-4 w-4 text-primary" />
+              <span data-testid={`text-cost-${ride.id}`}>{ride.costPerPerson}</span>
+              <span className="text-xs font-normal text-muted-foreground">/ person</span>
             </div>
             {ride.vehicle && (
-              <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                <Car className="h-4 w-4" />
+              <div className="flex items-center gap-1">
+                <Car className="h-3.5 w-3.5" />
                 <span data-testid={`text-vehicle-${ride.id}`}>{ride.vehicle}</span>
               </div>
             )}
+            {ride.isRecurring && (
+              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30 flex items-center gap-1">
+                <Repeat className="w-3 h-3" /> {ride.recurrencePattern || 'Recurring'}
+              </Badge>
+            )}
           </div>
-          
+
           {!isOwnRide && (
-            <div className="flex space-x-2">
+            <div className="flex items-center gap-2">
               <Button 
                 variant="outline" 
                 size="sm" 
                 onClick={() => onSendMessage(ride.driver.id)}
                 data-testid={`button-message-${ride.id}`}
+                className="gap-1 text-xs"
               >
-                <MessageCircle className="h-4 w-4 mr-1" />
+                <MessageCircle className="h-3.5 w-3.5" />
                 Message
               </Button>
               <Button 
                 size="sm" 
                 onClick={() => onRequestRide(ride.id)}
                 data-testid={`button-request-${ride.id}`}
+                className="gap-1 text-xs font-semibold"
               >
                 Request Ride
               </Button>
@@ -166,11 +171,9 @@ export default function RideCard({ ride, onRequestRide, onSendMessage, currentUs
         </div>
 
         {ride.notes && (
-          <div className="mt-3 p-3 bg-muted rounded-lg">
-            <p className="text-sm text-muted-foreground" data-testid={`text-notes-${ride.id}`}>
-              {ride.notes}
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground italic bg-muted/30 p-2.5 rounded-lg" data-testid={`text-notes-${ride.id}`}>
+            "{ride.notes}"
+          </p>
         )}
       </CardContent>
     </Card>

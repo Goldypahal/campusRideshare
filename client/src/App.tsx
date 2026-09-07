@@ -14,6 +14,7 @@ import MyRides from "@/pages/rides/my-rides";
 import Profile from "@/pages/profile";
 import NotFound from "@/pages/not-found";
 import { isAuthenticated } from "@/lib/auth";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 function Router() {
   const [isAuth, setIsAuth] = useState(isAuthenticated());
@@ -46,12 +47,14 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

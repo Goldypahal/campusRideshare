@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form"; // Added Controller
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { setAuthToken } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
-import { Mail, User, GraduationCap, UserCheck } from "lucide-react";
+import { Mail, User, GraduationCap } from "lucide-react"; // Removed unused UserCheck
 
 export default function Register() {
   const [, navigate] = useLocation();
@@ -46,6 +46,7 @@ export default function Register() {
       navigate("/");
     },
     onError: (error: Error) => {
+      setAgreedToTerms(false); // Reset checkbox on error for re-agreement
       toast({
         title: "Registration failed",
         description: error.message,
@@ -78,7 +79,7 @@ export default function Register() {
             <div>
               <Label className="text-card-foreground mb-2">University Email</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" aria-label="Email icon" />
                 <Input
                   type="email"
                   placeholder="student@university.edu"
@@ -109,7 +110,7 @@ export default function Register() {
             <div>
               <Label className="text-card-foreground mb-2">Full Name</Label>
               <div className="relative">
-                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" aria-label="User icon" />
                 <Input
                   type="text"
                   placeholder="John Doe"
@@ -126,41 +127,47 @@ export default function Register() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-card-foreground mb-2">Academic Year</Label>
-                <Select 
-                  value={form.watch("academicYear")} 
-                  onValueChange={(value) => form.setValue("academicYear", value as any)}
-                >
-                  <SelectTrigger data-testid="select-academic-year">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Freshman">Freshman</SelectItem>
-                    <SelectItem value="Sophomore">Sophomore</SelectItem>
-                    <SelectItem value="Junior">Junior</SelectItem>
-                    <SelectItem value="Senior">Senior</SelectItem>
-                    <SelectItem value="Graduate">Graduate</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Controller
+                  name="academicYear"
+                  control={form.control}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger data-testid="select-academic-year">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Freshman">Freshman</SelectItem>
+                        <SelectItem value="Sophomore">Sophomore</SelectItem>
+                        <SelectItem value="Junior">Junior</SelectItem>
+                        <SelectItem value="Senior">Senior</SelectItem>
+                        <SelectItem value="Graduate">Graduate</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
                 {form.formState.errors.academicYear && (
                   <p className="text-destructive text-sm mt-1">{form.formState.errors.academicYear.message}</p>
                 )}
               </div>
               <div>
                 <Label className="text-card-foreground mb-2">Gender</Label>
-                <Select 
-                  value={form.watch("gender")} 
-                  onValueChange={(value) => form.setValue("gender", value as any)}
-                >
-                  <SelectTrigger data-testid="select-gender">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Female">Female</SelectItem>
-                    <SelectItem value="Male">Male</SelectItem>
-                    <SelectItem value="Non-binary">Non-binary</SelectItem>
-                    <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Controller
+                  name="gender"
+                  control={form.control}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger data-testid="select-gender">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Non-binary">Non-binary</SelectItem>
+                        <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
                 {form.formState.errors.gender && (
                   <p className="text-destructive text-sm mt-1">{form.formState.errors.gender.message}</p>
                 )}
@@ -170,7 +177,7 @@ export default function Register() {
             <div>
               <Label className="text-card-foreground mb-2">Major/Department</Label>
               <div className="relative">
-                <GraduationCap className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <GraduationCap className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" aria-label="Graduation cap icon" />
                 <Input
                   type="text"
                   placeholder="e.g., Computer Science"
@@ -188,7 +195,7 @@ export default function Register() {
               <Checkbox 
                 id="terms" 
                 checked={agreedToTerms}
-                onCheckedChange={setAgreedToTerms}
+                onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
                 data-testid="checkbox-terms"
               />
               <Label htmlFor="terms" className="text-sm text-card-foreground leading-5">
@@ -213,10 +220,8 @@ export default function Register() {
           <div className="text-center">
             <p className="text-sm text-muted-foreground">
               Already have an account?{" "}
-              <Link href="/login">
-                <a className="text-primary hover:underline" data-testid="link-login">
-                  Sign in here
-                </a>
+              <Link href="/login" className="text-primary hover:underline" data-testid="link-login">
+                Sign in here
               </Link>
             </p>
           </div>

@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getAuthHeaders } from "./auth";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -7,20 +8,31 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-export async function apiRequest(
-  method: string,
-  url: string,
-  data?: unknown | undefined,
-): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+const API_BASE = (import.meta.env.VITE_API_URL as string) ?? '/api';
 
-  await throwIfResNotOk(res);
-  return res;
+function buildUrl(path: string) {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const base = API_BASE.replace(/\/$/, '');
+  return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`;
+}
+
+export async function apiRequest(method: string, path: string, body?: any) {
+  const url = buildUrl(path);
+
+  const rawHeaders = {
+    "Content-Type": "application/json",
+    ...(getAuthHeaders() || {}),
+  };
+  const headers = Object.fromEntries(
+    Object.entries(rawHeaders).filter(([, v]) => v != null)
+  ) as Record<string, string>;
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return response;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
