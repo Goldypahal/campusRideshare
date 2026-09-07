@@ -16,7 +16,7 @@ import {
   ratings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, or, and, asc, desc } from "drizzle-orm";
+import { eq, or, and, asc, desc, gt, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -39,6 +39,13 @@ export interface IStorage {
   getRideRequestsByRide(rideId: string): Promise<RideRequest[]>;
   getRideRequestsByPassenger(passengerId: string): Promise<RideRequest[]>;
   updateRideRequest(id: string, request: Partial<RideRequest>): Promise<RideRequest | undefined>;
+  acceptRideRequestAtomic(requestId: string, driverUserId: string): Promise<{
+    success: boolean;
+    request?: RideRequest;
+    ride?: Ride;
+    error?: string;
+    statusCode?: number;
+  }>;
 
   // Message methods
   createMessage(message: InsertMessage & { fromUserId: string }): Promise<Message>;
@@ -146,6 +153,50 @@ export class DatabaseStorage implements IStorage {
     if (!db) return undefined;
     const [updatedRequest] = await db.update(rideRequests).set(updateData).where(eq(rideRequests.id, id)).returning();
     return updatedRequest;
+  }
+
+  async acceptRideRequestAtomic(requestId: string, driverUserId: string): Promise<{
+    success: boolean;
+    request?: RideRequest;
+    ride?: Ride;
+    error?: string;
+    statusCode?: number;
+  }> {
+    if (!db) throw new Error("Database not connected");
+
+    const request = await this.getRideRequest(requestId);
+    if (!request) {
+      return { success: false, error: "Request not found", statusCode: 404 };
+    }
+    if (request.status !== "pending") {
+      return { success: false, error: `Request already ${request.status}`, statusCode: 400 };
+    }
+
+    const ride = await this.getRide(request.rideId);
+    if (!ride || ride.driverId !== driverUserId) {
+      return { success: false, error: "Not authorized to update this request", statusCode: 403 };
+    }
+
+    const [updatedRide] = await db
+      .update(rides)
+      .set({
+        availableSeats: sql`${rides.availableSeats} - 1`,
+        status: sql`CASE WHEN ${rides.availableSeats} - 1 <= 0 THEN 'full' ELSE ${rides.status} END`,
+      })
+      .where(and(eq(rides.id, ride.id), gt(rides.availableSeats, 0)))
+      .returning();
+
+    if (!updatedRide) {
+      return { success: false, error: "No available seats remaining for this ride", statusCode: 400 };
+    }
+
+    const [updatedRequest] = await db
+      .update(rideRequests)
+      .set({ status: "accepted" })
+      .where(eq(rideRequests.id, requestId))
+      .returning();
+
+    return { success: true, request: updatedRequest, ride: updatedRide };
   }
 
   async createMessage(messageData: InsertMessage & { fromUserId: string }): Promise<Message> {
@@ -318,6 +369,42 @@ export class MemStorage implements IStorage {
     return updatedRequest;
   }
 
+  async acceptRideRequestAtomic(requestId: string, driverUserId: string): Promise<{
+    success: boolean;
+    request?: RideRequest;
+    ride?: Ride;
+    error?: string;
+    statusCode?: number;
+  }> {
+    const request = this.rideRequests.get(requestId);
+    if (!request) {
+      return { success: false, error: "Request not found", statusCode: 404 };
+    }
+    if (request.status !== "pending") {
+      return { success: false, error: `Request already ${request.status}`, statusCode: 400 };
+    }
+
+    const ride = this.rides.get(request.rideId);
+    if (!ride || ride.driverId !== driverUserId) {
+      return { success: false, error: "Not authorized to update this request", statusCode: 403 };
+    }
+
+    if (ride.availableSeats <= 0) {
+      return { success: false, error: "No available seats remaining for this ride", statusCode: 400 };
+    }
+
+    ride.availableSeats -= 1;
+    if (ride.availableSeats === 0) {
+      ride.status = "full";
+    }
+    this.rides.set(ride.id, ride);
+
+    request.status = "accepted";
+    this.rideRequests.set(request.id, request);
+
+    return { success: true, request, ride };
+  }
+
   async createMessage(messageData: InsertMessage & { fromUserId: string }): Promise<Message> {
     const id = randomUUID();
     const message: Message = {
@@ -367,6 +454,10 @@ export class MemStorage implements IStorage {
       this.users.set(userId, updatedUser);
     }
   }
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  throw new Error("Fatal: MemStorage fallback is prohibited in production mode. Set DATABASE_URL.");
 }
 
 if (process.env.DATABASE_URL) {
