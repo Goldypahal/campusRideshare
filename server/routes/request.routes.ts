@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { storage } from "../storage";
 import { insertRideRequestSchema } from "@shared/schema";
 import { authenticateToken, type AuthRequest } from "./auth.routes";
+import { logTelemetryEvent } from "../services/telemetry.service";
 
 const router = Router();
 
@@ -25,6 +26,8 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
       ...requestData,
       passengerId: req.user!.id,
     });
+
+    logTelemetryEvent("REQUEST_RIDE", req.user!.id, rideRequest.rideId);
 
     if ((req.app as any).sendToUser) {
       (req.app as any).sendToUser(ride.driverId, { type: "ride_request_created", request: rideRequest, ride });
@@ -74,6 +77,8 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response) 
       }
 
       const updatedRequest = await storage.updateRideRequest(req.params.id, { status: "rejected" });
+      logTelemetryEvent("REJECT_REQUEST", req.user!.id, request.rideId);
+
       if ((req.app as any).sendToUser) {
         (req.app as any).sendToUser(request.passengerId, { type: "ride_request_status", request: updatedRequest, ride });
       }
@@ -84,6 +89,10 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response) 
     const result = await storage.acceptRideRequestAtomic(req.params.id, req.user!.id);
     if (!result.success) {
       return res.status(result.statusCode || 400).json({ message: result.error });
+    }
+
+    if (result.request) {
+      logTelemetryEvent("ACCEPT_REQUEST", req.user!.id, result.request.rideId);
     }
 
     if ((req.app as any).sendToUser && result.request && result.ride) {
@@ -101,3 +110,4 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response) 
 });
 
 export default router;
+

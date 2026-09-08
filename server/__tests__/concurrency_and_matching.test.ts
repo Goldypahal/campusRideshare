@@ -139,10 +139,36 @@ async function runTests() {
   assert.ok(breakdown.reasons.length > 0, "Match breakdown should include human-readable match reasons");
   console.log("✅ Test 3 Passed: Multi-Factor Smart Match engine calculations verified");
 
-  console.log("🎉 All concurrency & smart matching tests passed successfully!");
+  // Test 4: Geospatial Route Overlap & Detour Calculation
+  const { calculateRouteOverlap, resolveCoordinates } = await import("../services/geospatial.service");
+  const driverOrig = resolveCoordinates("Hostel A");
+  const driverDest = resolveCoordinates("Chandigarh Railway Station");
+  const passOrig = resolveCoordinates("Academic Block 1");
+  const passDest = resolveCoordinates("Chandigarh Railway Station");
+
+  const spatialMatch = calculateRouteOverlap(driverOrig, driverDest, passOrig, passDest);
+  assert.ok(spatialMatch.overlapPercentage >= 75, "Campus to Railway station routes should have high overlap %");
+  assert.ok(spatialMatch.detourKm < 3.0, "Pickup detour distance should be minimal");
+  console.log("✅ Test 4 Passed: Spatial route overlap & detour math verified");
+
+  // Test 5: Telemetry Event Logging
+  const eventPayload = await storage.createRideEvent({
+    eventType: "VIEW_RIDE",
+    userId: driver.id,
+    rideId: ride.id,
+    metadata: JSON.stringify({ source: "unit_test" }),
+  });
+  assert.ok(eventPayload.id, "Ride telemetry event should be created with unique ID");
+  assert.strictEqual(eventPayload.eventType, "VIEW_RIDE");
+  const userEvents = await storage.getRideEventsByUser(driver.id);
+  assert.strictEqual(userEvents.length, 1, "User telemetry event history should contain 1 event");
+  console.log("✅ Test 5 Passed: Telemetry event stream logging verified");
+
+  console.log("🎉 All concurrency, smart matching, geospatial & telemetry tests passed successfully!");
 }
 
 runTests().catch(err => {
   console.error("❌ Test run failed:", err);
   process.exit(1);
 });
+

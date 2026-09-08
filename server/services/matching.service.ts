@@ -1,4 +1,5 @@
 import { calculateTrustScore } from "./reputation.service";
+import { resolveCoordinates, calculateRouteOverlap, haversineDistance } from "./geospatial.service";
 import type { Ride, User } from "@shared/schema";
 
 export interface MatchQueryParams {
@@ -9,6 +10,10 @@ export interface MatchQueryParams {
   timeWindow?: number;
   genderPref?: string;
   yearPref?: string;
+  originLat?: number;
+  originLng?: number;
+  destLat?: number;
+  destLng?: number;
 }
 
 export interface MatchBreakdown {
@@ -17,6 +22,8 @@ export interface MatchBreakdown {
   timeScore: number;
   trustScore: number;
   preferenceScore: number;
+  spatialOverlapPct: number;
+  detourKm: number;
   reasons: string[];
 }
 
@@ -27,8 +34,10 @@ export interface SmartMatchResult {
   breakdown: MatchBreakdown;
 }
 
+const PYTHON_ML_URL = process.env.PYTHON_ML_SERVICE_URL || "http://127.0.0.1:8000";
+
 /**
- * Calculates multi-factor match score between a user/query and a ride/driver
+ * Calculates multi-factor spatial & temporal match score between a user query and a ride/driver
  */
 export function calculateRideMatch(
   ride: Ride,
@@ -41,32 +50,33 @@ export function calculateRideMatch(
   let preferenceScore = 0;
   const reasons: string[] = [];
 
-  const rideOrigin = ride.origin.toLowerCase();
-  const rideDest = ride.destination.toLowerCase();
+  // 1. Geospatial Route & Overlap Calculation
+  const userOriginStr = query.origin || user?.housingZone || "Main Gate";
+  const userDestStr = query.destination || user?.homeAirport || "Chandigarh Railway Station";
 
-  // 1. Route & Geographic Overlap (max 40 pts)
-  const searchOrigin = query.origin?.toLowerCase();
-  const searchDest = query.destination?.toLowerCase();
+  const passengerOriginCoords = resolveCoordinates(userOriginStr, query.originLat, query.originLng);
+  const passengerDestCoords = resolveCoordinates(userDestStr, query.destLat, query.destLng);
 
-  if (searchOrigin && rideOrigin.includes(searchOrigin)) {
-    routeScore += 20;
-    reasons.push(`Origin matches "${query.origin}"`);
+  const driverOriginCoords = resolveCoordinates(ride.origin, ride.originLat, ride.originLng);
+  const driverDestCoords = resolveCoordinates(ride.destination, ride.destLat, ride.destLng);
+
+  const spatialMatch = calculateRouteOverlap(
+    driverOriginCoords,
+    driverDestCoords,
+    passengerOriginCoords,
+    passengerDestCoords
+  );
+
+  // Convert spatial overlap % to max 45 pts
+  routeScore = Math.round((spatialMatch.overlapPercentage / 100) * 45);
+  if (spatialMatch.overlapPercentage >= 80) {
+    reasons.push(`High route overlap (${spatialMatch.overlapPercentage}%)`);
+  } else if (spatialMatch.overlapPercentage >= 50) {
+    reasons.push(`${spatialMatch.overlapPercentage}% route similarity`);
   }
-  if (searchDest && rideDest.includes(searchDest)) {
-    routeScore += 20;
-    reasons.push(`Destination matches "${query.destination}"`);
-  }
 
-  // Fallback to user homeAirport / housingZone if search parameters omitted
-  if (!searchOrigin && !searchDest && user) {
-    if (user.homeAirport && (rideOrigin.includes(user.homeAirport.toLowerCase()) || rideDest.includes(user.homeAirport.toLowerCase()))) {
-      routeScore += 20;
-      reasons.push(`Matches home airport (${user.homeAirport})`);
-    }
-    if (user.housingZone && (rideOrigin.includes(user.housingZone.toLowerCase()) || rideDest.includes(user.housingZone.toLowerCase()))) {
-      routeScore += 20;
-      reasons.push(`Matches housing zone (${user.housingZone})`);
-    }
+  if (spatialMatch.detourKm <= 2.0) {
+    reasons.push(`Minimal detour (${spatialMatch.detourKm} km)`);
   }
 
   // 2. Time Compatibility (max 25 pts)
@@ -114,28 +124,31 @@ export function calculateRideMatch(
     }
   }
 
-  // 4. Preference Compatibility (max 15 pts)
+  // 4. Preference Compatibility (max 10 pts)
   if (driver) {
     if (query.genderPref && query.genderPref !== "No preference") {
       if (driver.gender.toLowerCase() === query.genderPref.toLowerCase()) {
-        preferenceScore += 7.5;
+        preferenceScore += 5;
         reasons.push(`Matches gender preference (${driver.gender})`);
       }
     } else {
-      preferenceScore += 7.5;
+      preferenceScore += 5;
     }
 
     if (query.yearPref && query.yearPref !== "Any year") {
       if (driver.academicYear.toLowerCase() === query.yearPref.toLowerCase()) {
-        preferenceScore += 7.5;
+        preferenceScore += 5;
         reasons.push(`Matches academic year (${driver.academicYear})`);
       }
     } else {
-      preferenceScore += 7.5;
+      preferenceScore += 5;
     }
   }
 
-  const totalScore = Math.min(Math.round(routeScore + timeScore + trustComponentScore + preferenceScore), 100);
+  const totalScore = Math.min(
+    Math.round(routeScore + timeScore + trustComponentScore + preferenceScore),
+    100
+  );
 
   return {
     totalScore,
@@ -143,6 +156,97 @@ export function calculateRideMatch(
     timeScore,
     trustScore: trustComponentScore,
     preferenceScore,
+    spatialOverlapPct: spatialMatch.overlapPercentage,
+    detourKm: spatialMatch.detourKm,
     reasons,
   };
 }
+
+/**
+ * Ranks candidate rides using Python ML service, falling back to V1 Rule-Based engine if ML service is unavailable.
+ */
+export async function rankCandidateRidesML(
+  candidates: { ride: Ride; driver: User | null }[],
+  query: MatchQueryParams = {}
+): Promise<SmartMatchResult[]> {
+  // First extract baseline features for all candidates
+  const baselineResults = candidates.map(({ ride, driver }) => {
+    const breakdown = calculateRideMatch(ride, driver, null, query);
+    const driverWithoutPassword = driver
+      ? (({ password, ...rest }) => rest)(driver)
+      : null;
+
+    return {
+      ride,
+      driver: driverWithoutPassword,
+      matchScore: breakdown.totalScore,
+      breakdown,
+    };
+  });
+
+  // Attempt ML model ranker
+  try {
+    const payload = {
+      candidates: baselineResults.map((item) => {
+        const rideMins = item.ride.time
+          ? parseInt(item.ride.time.split(":")[0]) * 60 + parseInt(item.ride.time.split(":")[1] || "0")
+          : 0;
+        const queryMins = query.time
+          ? parseInt(query.time.split(":")[0]) * 60 + parseInt(query.time.split(":")[1] || "0")
+          : 0;
+        const departureDiff = Math.abs(queryMins - rideMins);
+
+        return {
+          ride_id: item.ride.id,
+          route_overlap_pct: item.breakdown.spatialOverlapPct,
+          departure_diff_mins: departureDiff,
+          pickup_dev_km: item.breakdown.detourKm * 0.5,
+          dest_dev_km: item.breakdown.detourKm * 0.5,
+          driver_rating: item.driver?.rating || 4.0,
+          driver_trust_score: item.driver?.trustScore || 85.0,
+          cancellation_rate: 0.05,
+          gender_pref_match: 1,
+        };
+      }),
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+    const res = await fetch(`${PYTHON_ML_URL}/predict/matches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const mlData = await res.json();
+      const scoreMap = new Map<string, { score: number; reasons: string[] }>();
+      for (const r of mlData.ranked_rides || []) {
+        scoreMap.set(r.ride_id, { score: r.match_score, reasons: r.reasons });
+      }
+
+      for (const item of baselineResults) {
+        const mlPrediction = scoreMap.get(item.ride.id);
+        if (mlPrediction) {
+          item.matchScore = mlPrediction.score;
+          item.breakdown.totalScore = mlPrediction.score;
+          if (mlPrediction.reasons && mlPrediction.reasons.length > 0) {
+            item.breakdown.reasons = Array.from(
+              new Set([...mlPrediction.reasons, ...item.breakdown.reasons])
+            );
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // Graceful fallback to V1 Rule-Based scoring
+  }
+
+  // Sort descending by match score
+  return baselineResults.sort((a, b) => b.matchScore - a.matchScore);
+}
+

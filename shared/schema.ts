@@ -14,6 +14,9 @@ export const users = pgTable("users", {
   isVerified: boolean("is_verified").default(false),
   rating: real("rating").default(0),
   totalRides: integer("total_rides").default(0),
+  cancellationCount: integer("cancellation_count").default(0),
+  completedRidesCount: integer("completed_rides_count").default(0),
+  trustScore: integer("trust_score").default(85),
   homeAirport: text("home_airport"),
   housingZone: text("housing_zone"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -28,6 +31,13 @@ export const rides = pgTable("rides", {
   driverId: varchar("driver_id").notNull().references(() => users.id),
   origin: text("origin").notNull(),
   destination: text("destination").notNull(),
+  originLat: real("origin_lat"),
+  originLng: real("origin_lng"),
+  destLat: real("dest_lat"),
+  destLng: real("dest_lng"),
+  routePolyline: text("route_polyline"),
+  estimatedDurationMins: integer("estimated_duration_mins"),
+  distanceKm: real("distance_km"),
   date: text("date").notNull(),
   time: text("time").notNull(),
   availableSeats: integer("available_seats").notNull(),
@@ -87,11 +97,28 @@ export const ratings = pgTable("ratings", {
   };
 });
 
+export const rideEvents = pgTable("ride_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  rideId: varchar("ride_id").references(() => rides.id),
+  eventType: text("event_type").notNull(), // VIEW_RIDE, CLICK_RIDE, REQUEST_RIDE, ACCEPT_REQUEST, REJECT_REQUEST, CANCEL_RIDE, COMPLETE_RIDE, RATE_RIDE
+  metadata: text("metadata"), // JSON string containing contextual features
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    userEventTypeIdx: index("ride_events_user_event_idx").on(table.userId, table.eventType),
+    rideIdx: index("ride_events_ride_idx").on(table.rideId),
+  };
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   isVerified: true,
   rating: true,
   totalRides: true,
+  cancellationCount: true,
+  completedRidesCount: true,
+  trustScore: true,
   createdAt: true,
 }).extend({
   email: z.string().email().refine(email => email.endsWith('.edu'), {
@@ -112,6 +139,10 @@ export const insertRideSchema = createInsertSchema(rides).omit({
 }).extend({
   availableSeats: z.number().min(1).max(4),
   costPerPerson: z.number().min(0),
+  originLat: z.number().optional(),
+  originLng: z.number().optional(),
+  destLat: z.number().optional(),
+  destLng: z.number().optional(),
   isRecurring: z.boolean().optional(),
   recurrencePattern: z.string().optional(),
 });
@@ -137,6 +168,11 @@ export const insertRatingSchema = createInsertSchema(ratings).omit({
   rating: z.number().min(1).max(5),
 });
 
+export const insertRideEventSchema = createInsertSchema(rideEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -152,5 +188,8 @@ export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type Message = typeof messages.$inferSelect;
 export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
+export type InsertRideEvent = z.infer<typeof insertRideEventSchema>;
+export type RideEvent = typeof rideEvents.$inferSelect;
 export type LoginData = z.infer<typeof loginSchema>;
+
 

@@ -2,7 +2,8 @@ import { Router, type Response } from "express";
 import { storage } from "../storage";
 import { insertRideSchema } from "@shared/schema";
 import { authenticateToken, type AuthRequest } from "./auth.routes";
-import { calculateRideMatch } from "../services/matching.service";
+import { rankCandidateRidesML, calculateRideMatch } from "../services/matching.service";
+import { logTelemetryEvent } from "../services/telemetry.service";
 
 const router = Router();
 
@@ -12,6 +13,8 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
     const rideData = insertRideSchema.parse(req.body);
     const ride = await storage.createRide({ ...rideData, driverId: req.user!.id });
     
+    logTelemetryEvent("VIEW_RIDE", req.user!.id, ride.id, { action: "CREATE_RIDE", origin: ride.origin });
+
     if ((req.app as any).broadcastWS) {
       (req.app as any).broadcastWS({ type: "ride_created", ride });
     }
@@ -95,34 +98,38 @@ router.get("/smart-matches", authenticateToken, async (req: AuthRequest, res: Re
 
     const allRides = await storage.getRides(0, 100);
 
-    const matches = await Promise.all(
-      allRides.map(async ride => {
+    const candidates = await Promise.all(
+      allRides.map(async (ride) => {
         const driver = await storage.getUser(ride.driverId);
-        const breakdown = calculateRideMatch(ride, driver || null, user, {
-          origin: req.query.origin as string,
-          destination: req.query.destination as string,
-          date: req.query.date as string,
-          time: req.query.time as string,
-          timeWindow: req.query.timeWindow ? parseInt(req.query.timeWindow as string, 10) : undefined,
-          genderPref: req.query.genderPref as string,
-          yearPref: req.query.yearPref as string,
-        });
-
-        return {
-          ...ride,
-          driver: driver ? { ...driver, password: undefined } : null,
-          matchPercentage: breakdown.totalScore,
-          matchBreakdown: breakdown,
-        };
+        return { ride, driver: driver || null };
       })
     );
 
-    // Sort descending by matchPercentage
-    const sortedMatches = matches
-      .filter(m => m.matchPercentage > 20)
-      .sort((a, b) => b.matchPercentage - a.matchPercentage);
+    const queryParams = {
+      origin: req.query.origin as string,
+      destination: req.query.destination as string,
+      date: req.query.date as string,
+      time: req.query.time as string,
+      timeWindow: req.query.timeWindow ? parseInt(req.query.timeWindow as string, 10) : undefined,
+      genderPref: req.query.genderPref as string,
+      yearPref: req.query.yearPref as string,
+    };
 
-    res.json(sortedMatches);
+    const rankedCandidates = await rankCandidateRidesML(candidates, queryParams);
+
+    const formattedMatches = rankedCandidates.map((c) => ({
+      ...c.ride,
+      driver: c.driver,
+      matchPercentage: c.matchScore,
+      matchBreakdown: c.breakdown,
+    }));
+
+    logTelemetryEvent("VIEW_RIDE", req.user!.id, undefined, {
+      query: queryParams,
+      resultsCount: formattedMatches.length,
+    });
+
+    res.json(formattedMatches);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -144,6 +151,11 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
     const ride = await storage.getRide(req.params.id);
     if (!ride) return res.status(404).json({ message: "Ride not found" });
     const driver = await storage.getUser(ride.driverId);
+    
+    if (req.user?.id) {
+      logTelemetryEvent("CLICK_RIDE", req.user.id, ride.id);
+    }
+    
     res.json({ ...ride, driver: driver ? { ...driver, password: undefined } : null });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -151,3 +163,4 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
 });
 
 export default router;
+

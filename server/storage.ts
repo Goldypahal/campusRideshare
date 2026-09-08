@@ -9,11 +9,14 @@ import {
   type InsertMessage,
   type Rating,
   type InsertRating,
+  type RideEvent,
+  type InsertRideEvent,
   users,
   rides,
   rideRequests,
   messages,
   ratings,
+  rideEvents,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, or, and, asc, desc, gt, sql } from "drizzle-orm";
@@ -55,6 +58,10 @@ export interface IStorage {
   createRating(rating: InsertRating & { fromUserId: string }): Promise<Rating>;
   getRatingsByUser(userId: string): Promise<Rating[]>;
   updateUserRating(userId: string): Promise<void>;
+
+  // Telemetry Event methods
+  createRideEvent(event: InsertRideEvent): Promise<RideEvent>;
+  getRideEventsByUser(userId: string): Promise<RideEvent[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -247,6 +254,22 @@ export class DatabaseStorage implements IStorage {
       }).where(eq(users.id, userId));
     }
   }
+
+  async createRideEvent(eventData: InsertRideEvent): Promise<RideEvent> {
+    if (!db) throw new Error("Database not connected");
+    const [event] = await db.insert(rideEvents).values({
+      ...eventData,
+      userId: eventData.userId ?? null,
+      rideId: eventData.rideId ?? null,
+      metadata: eventData.metadata ?? null,
+    }).returning();
+    return event;
+  }
+
+  async getRideEventsByUser(userId: string): Promise<RideEvent[]> {
+    if (!db) return [];
+    return db.select().from(rideEvents).where(eq(rideEvents.userId, userId));
+  }
 }
 
 export class MemStorage implements IStorage {
@@ -255,6 +278,7 @@ export class MemStorage implements IStorage {
   private rideRequests: Map<string, RideRequest>;
   private messages: Map<string, Message>;
   private ratings: Map<string, Rating>;
+  private rideEventsMap: Map<string, RideEvent>;
 
   constructor() {
     this.users = new Map();
@@ -262,6 +286,7 @@ export class MemStorage implements IStorage {
     this.rideRequests = new Map();
     this.messages = new Map();
     this.ratings = new Map();
+    this.rideEventsMap = new Map();
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -280,6 +305,9 @@ export class MemStorage implements IStorage {
       isVerified: false,
       rating: 0,
       totalRides: 0,
+      cancellationCount: 0,
+      completedRidesCount: 0,
+      trustScore: 85,
       homeAirport: insertUser.homeAirport ?? null,
       housingZone: insertUser.housingZone ?? null,
       createdAt: new Date(),
@@ -304,6 +332,13 @@ export class MemStorage implements IStorage {
       id,
       status: "active",
       createdAt: new Date(),
+      originLat: rideData.originLat ?? null,
+      originLng: rideData.originLng ?? null,
+      destLat: rideData.destLat ?? null,
+      destLng: rideData.destLng ?? null,
+      routePolyline: null,
+      estimatedDurationMins: null,
+      distanceKm: null,
       vehicle: rideData.vehicle ?? null,
       notes: rideData.notes ?? null,
       isRecurring: rideData.isRecurring ?? false,
@@ -453,6 +488,24 @@ export class MemStorage implements IStorage {
       const updatedUser = { ...user, rating: Math.round(avgRating * 10) / 10, totalRides: userRatings.length };
       this.users.set(userId, updatedUser);
     }
+  }
+
+  async createRideEvent(eventData: InsertRideEvent): Promise<RideEvent> {
+    const id = randomUUID();
+    const event: RideEvent = {
+      ...eventData,
+      id,
+      userId: eventData.userId ?? null,
+      rideId: eventData.rideId ?? null,
+      metadata: eventData.metadata ?? null,
+      createdAt: new Date(),
+    };
+    this.rideEventsMap.set(id, event);
+    return event;
+  }
+
+  async getRideEventsByUser(userId: string): Promise<RideEvent[]> {
+    return Array.from(this.rideEventsMap.values()).filter(event => event.userId === userId);
   }
 }
 
