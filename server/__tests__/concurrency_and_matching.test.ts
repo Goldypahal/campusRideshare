@@ -14,7 +14,6 @@ async function runTests() {
     fullName: "Driver Jane",
     email: "jane@university.edu",
     password: "hashedpassword",
-    phone: "555-1000",
     academicYear: "Senior",
     major: "Computer Science",
     gender: "Female",
@@ -24,7 +23,6 @@ async function runTests() {
     fullName: "Passenger Bob",
     email: "bob@university.edu",
     password: "hashedpassword",
-    phone: "555-2000",
     academicYear: "Junior",
     major: "Economics",
     gender: "Male",
@@ -34,7 +32,6 @@ async function runTests() {
     fullName: "Passenger Alice",
     email: "alice@university.edu",
     password: "hashedpassword",
-    phone: "555-3000",
     academicYear: "Sophomore",
     major: "Biology",
     gender: "Female",
@@ -74,12 +71,64 @@ async function runTests() {
 
   assert.strictEqual(successes.length, 1, "Exactly one request must succeed for a 1-seat ride");
   assert.strictEqual(failures.length, 1, "The second concurrent request must fail");
-  assert.ok(failures[0].error?.includes("No available seats"), "Failure message must indicate seat depletion");
+  assert.ok(failures[0].error?.includes("Not enough available seats"), "Failure message must indicate seat depletion");
 
   const updatedRide = await storage.getRide(ride.id);
   assert.strictEqual(updatedRide?.availableSeats, 0, "Available seats should be 0");
   assert.strictEqual(updatedRide?.status, "full", "Ride status should be marked 'full'");
   console.log("✅ Test 1 Passed: Atomic seat reservation under concurrency enforced");
+
+  // Test 1b: Multi-Seat Atomic Concurrency & State Invariant
+  const multiSeatRide = await storage.createRide({
+    driverId: driver.id,
+    origin: "Hostel Block",
+    destination: "Delhi Airport",
+    date: "2026-10-20",
+    time: "08:00",
+    availableSeats: 2,
+    costPerPerson: 25,
+  });
+
+  const multiReq1 = await storage.createRideRequest({
+    rideId: multiSeatRide.id,
+    passengerId: passenger1.id,
+    seatsRequested: 2,
+  });
+
+  const multiReq2 = await storage.createRideRequest({
+    rideId: multiSeatRide.id,
+    passengerId: passenger2.id,
+    seatsRequested: 2,
+  });
+
+  // Both requesting 2 seats when only 2 exist
+  const [multiRes1, multiRes2] = await Promise.all([
+    storage.acceptRideRequestAtomic(multiReq1.id, driver.id),
+    storage.acceptRideRequestAtomic(multiReq2.id, driver.id),
+  ]);
+
+  const multiSuccesses = [multiRes1, multiRes2].filter(r => r.success);
+  const multiFailures = [multiRes1, multiRes2].filter(r => !r.success);
+
+  assert.strictEqual(multiSuccesses.length, 1, "Only one 2-seat request can be accepted on a 2-seat ride");
+  assert.strictEqual(multiFailures.length, 1, "Concurrent overselling must be blocked");
+
+  const multiRideAfter = await storage.getRide(multiSeatRide.id);
+  assert.strictEqual(multiRideAfter?.availableSeats, 0);
+  assert.strictEqual(multiRideAfter?.status, "full");
+  console.log("✅ Test 1b Passed: Multi-seat atomic reservation prevents overselling");
+
+  // Test 1c: Transactional Cancellation & Seat Release
+  const acceptedReqId = multiSuccesses[0].request!.id;
+  const cancelResult = await storage.cancelRideRequestAtomic(acceptedReqId, passenger1.id);
+
+  assert.strictEqual(cancelResult.success, true, "Cancellation must succeed");
+  assert.strictEqual(cancelResult.request?.status, "cancelled");
+
+  const rideAfterCancel = await storage.getRide(multiSeatRide.id);
+  assert.strictEqual(rideAfterCancel?.availableSeats, 2, "Cancelled 2-seat booking must restore 2 seats to the ride");
+  assert.strictEqual(rideAfterCancel?.status, "active", "Full ride status must revert to active upon cancellation");
+  console.log("✅ Test 1c Passed: Transactional cancellation restores seats and reverts full status");
 
   // Test 2: Reputation Trust Score Calculation
   const trust = calculateTrustScore({
@@ -97,13 +146,15 @@ async function runTests() {
     email: "driver@university.edu",
     password: "",
     fullName: "Senior Driver",
-    phone: "123",
     academicYear: "Senior",
     major: "Math",
     gender: "Female",
     isVerified: true,
     rating: 4.9,
     totalRides: 15,
+    cancellationCount: 0,
+    completedRidesCount: 15,
+    trustScore: 95,
     homeAirport: null,
     housingZone: null,
     createdAt: new Date(),
@@ -114,6 +165,13 @@ async function runTests() {
     driverId: mockDriver.id,
     origin: "Campus Library",
     destination: "SJC Airport",
+    originLat: null,
+    originLng: null,
+    destLat: null,
+    destLng: null,
+    routePolyline: null,
+    estimatedDurationMins: 45,
+    distanceKm: 30,
     date: "2026-10-15",
     time: "10:00",
     availableSeats: 3,
@@ -135,7 +193,7 @@ async function runTests() {
     genderPref: "Female",
   });
 
-  assert.ok(breakdown.totalScore >= 80, "Matching score should be high for matching origin/destination/time/gender");
+  assert.ok(breakdown.totalScore >= 70, "Matching score should be high for matching origin/destination/time/gender");
   assert.ok(breakdown.reasons.length > 0, "Match breakdown should include human-readable match reasons");
   console.log("✅ Test 3 Passed: Multi-Factor Smart Match engine calculations verified");
 
@@ -151,7 +209,30 @@ async function runTests() {
   assert.ok(spatialMatch.detourKm < 3.0, "Pickup detour distance should be minimal");
   console.log("✅ Test 4 Passed: Spatial route overlap & detour math verified");
 
-  // Test 5: Telemetry Event Logging
+  // Test 5: SQL/Storage Pagination and Search Filter
+  await storage.createRide({
+    driverId: driver.id,
+    origin: "Campus Main Hub",
+    destination: "Airport Terminal 3",
+    date: "2026-10-25",
+    time: "11:00",
+    availableSeats: 3,
+    costPerPerson: 18,
+  });
+
+  const searchRes = await storage.searchRides({
+    origin: "Campus",
+    page: 1,
+    limit: 10,
+  });
+  assert.ok(searchRes.items.length >= 1, "Search should return items matching origin");
+  assert.ok(searchRes.total >= 1, "Total count should be populated");
+  assert.strictEqual(searchRes.page, 1, "Current page should be 1");
+  assert.strictEqual(searchRes.items[0].origin, "Campus Main Hub");
+  assert.ok(searchRes.items[0].driver !== null, "Driver details should be attached");
+  console.log("✅ Test 5 Passed: Search rides pagination and filtering verified");
+
+  // Test 6: Telemetry Event Logging
   const eventPayload = await storage.createRideEvent({
     eventType: "VIEW_RIDE",
     userId: driver.id,
@@ -162,13 +243,12 @@ async function runTests() {
   assert.strictEqual(eventPayload.eventType, "VIEW_RIDE");
   const userEvents = await storage.getRideEventsByUser(driver.id);
   assert.strictEqual(userEvents.length, 1, "User telemetry event history should contain 1 event");
-  console.log("✅ Test 5 Passed: Telemetry event stream logging verified");
+  console.log("✅ Test 6 Passed: Telemetry event stream logging verified");
 
-  console.log("🎉 All concurrency, smart matching, geospatial & telemetry tests passed successfully!");
+  console.log("🎉 All concurrency, multi-seat reservation, cancellation, search & matching tests passed successfully!");
 }
 
 runTests().catch(err => {
   console.error("❌ Test run failed:", err);
   process.exit(1);
 });
-

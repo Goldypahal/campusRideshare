@@ -28,62 +28,24 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
 router.get("/", async (req: AuthRequest, res: Response) => {
   try {
     const page = parseInt(req.query.page as string || "1", 10);
-    const limit = parseInt(req.query.limit as string || "50", 10);
-    const offset = (page - 1) * limit;
+    const limit = parseInt(req.query.limit as string || "20", 10);
+    const { origin, destination, date, time, timeWindow, genderPref, yearPref, isRecurring, minSeats } = req.query as Record<string, string>;
 
-    let rides = await storage.getRides(offset, limit);
-    const { origin, destination, date, time, timeWindow, genderPref, yearPref, isRecurring } = req.query as Record<string, string>;
+    const searchResult = await storage.searchRides({
+      origin,
+      destination,
+      date,
+      time,
+      timeWindow: timeWindow ? parseInt(timeWindow, 10) : undefined,
+      genderPref,
+      yearPref,
+      isRecurring: isRecurring !== undefined ? isRecurring === "true" : undefined,
+      minSeats: minSeats ? parseInt(minSeats, 10) : undefined,
+      page,
+      limit,
+    });
 
-    if (origin) {
-      rides = rides.filter(r => r.origin?.toLowerCase().includes(origin.toLowerCase()));
-    }
-    if (destination) {
-      rides = rides.filter(r => r.destination?.toLowerCase().includes(destination.toLowerCase()));
-    }
-    if (date) {
-      rides = rides.filter(r => r.date === date);
-    }
-    if (isRecurring === "true") {
-      rides = rides.filter(r => r.isRecurring === true);
-    }
-
-    if (time) {
-      const window = parseInt(timeWindow || '15', 10) || 15;
-      const toMinutes = (t: string) => {
-        const [hh, mm] = t.split(':').map(x => parseInt(x, 10) || 0);
-        return hh * 60 + mm;
-      };
-      const target = toMinutes(time);
-      rides = rides.filter(r => {
-        try {
-          const rideMinutes = toMinutes(r.time);
-          return Math.abs(rideMinutes - target) <= window;
-        } catch {
-          return true;
-        }
-      });
-    }
-
-    if (genderPref || yearPref) {
-      const driverPromises = rides.map(r => storage.getUser(r.driverId));
-      const drivers = await Promise.all(driverPromises);
-      rides = rides.filter((r, idx) => {
-        const d = drivers[idx];
-        if (!d) return false;
-        if (genderPref && d.gender.toLowerCase() !== genderPref.toLowerCase()) return false;
-        if (yearPref && d.academicYear.toLowerCase() !== yearPref.toLowerCase()) return false;
-        return true;
-      });
-    }
-
-    const enhancedRides = await Promise.all(
-      rides.map(async ride => {
-        const driver = await storage.getUser(ride.driverId);
-        return { ...ride, driver: driver ? { ...driver, password: undefined } : null };
-      })
-    );
-
-    res.json(enhancedRides);
+    res.json(searchResult);
   } catch (error: any) {
     console.error('Error fetching rides:', error);
     res.status(500).json({ message: error.message });
@@ -98,8 +60,19 @@ router.get("/smart-matches", authenticateToken, async (req: AuthRequest, res: Re
 
     const allRides = await storage.getRides(0, 100);
 
+    // Hard Constraint Filtering (Algorithm A):
+    // 1. Must be active status
+    // 2. Must have available seats
+    // 3. Prevent self-matching (driver cannot match their own ride)
+    const eligibleRides = allRides.filter((ride) => {
+      if (ride.status !== "active") return false;
+      if (ride.availableSeats <= 0) return false;
+      if (ride.driverId === req.user!.id) return false;
+      return true;
+    });
+
     const candidates = await Promise.all(
-      allRides.map(async (ride) => {
+      eligibleRides.map(async (ride) => {
         const driver = await storage.getUser(ride.driverId);
         return { ride, driver: driver || null };
       })

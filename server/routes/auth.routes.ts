@@ -4,6 +4,7 @@ import { insertUserSchema, loginSchema } from "@shared/schema";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { env } from "../env";
+import { randomBytes } from "crypto";
 
 const router = Router();
 const JWT_SECRET = env.JWT_SECRET;
@@ -18,7 +19,7 @@ export const authRateLimiter = (req: Request, res: Response, next: NextFunction)
   const ip = req.ip || req.socket.remoteAddress || "global";
   const now = Date.now();
   const limitWindow = 15 * 60 * 1000; // 15 mins window
-  const maxRequests = 20;
+  const maxRequests = 25;
 
   const record = rateLimitMap.get(ip);
   if (!record || now > record.resetTime) {
@@ -26,7 +27,7 @@ export const authRateLimiter = (req: Request, res: Response, next: NextFunction)
     return next();
   }
   if (record.count >= maxRequests) {
-    return res.status(429).json({ message: "Too many authentication requests. Please try again later." });
+    return res.status(429).json({ message: "Too many authentication attempts. Please try again in 15 minutes." });
   }
   record.count += 1;
   next();
@@ -51,7 +52,7 @@ export const authenticateToken = async (
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(403).json({ message: "Invalid token" });
+    return res.status(403).json({ message: "Invalid or expired token" });
   }
 };
 
@@ -68,14 +69,101 @@ router.post("/register", authRateLimiter, async (req: Request, res: Response) =>
     const hashedPassword = await bcrypt.hash(userData.password, 10);
     const user = await storage.createUser({ ...userData, password: hashedPassword });
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+    // Generate expiring single-use verification token (24-hour validity)
+    const verificationHex = randomBytes(24).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const verificationToken = await storage.createVerificationToken({
+      userId: user.id,
+      token: verificationHex,
+      type: "email_verification",
+      expiresAt,
+    });
+
+    const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
 
     res.status(201).json({
       user: { ...user, password: undefined },
-      token,
+      token: jwtToken,
+      verification: {
+        token: verificationToken.token,
+        expiresAt: verificationToken.expiresAt,
+        message: "Account registered. Please verify your email using the verification token.",
+      },
     });
   } catch (error: any) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+// POST /api/auth/verify-email
+router.post("/verify-email", authRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { token } = req.body;
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ message: "Verification token is required" });
+    }
+
+    const record = await storage.getVerificationToken(token);
+    if (!record) {
+      return res.status(400).json({ message: "Invalid verification token" });
+    }
+
+    if (record.usedAt) {
+      return res.status(400).json({ message: "This verification token has already been used" });
+    }
+
+    if (new Date() > new Date(record.expiresAt)) {
+      return res.status(400).json({ message: "Verification token has expired. Please request a new one." });
+    }
+
+    // Mark token used and user verified
+    await storage.markTokenUsed(record.id);
+    const updatedUser = await storage.updateUser(record.userId, { isVerified: true });
+
+    res.json({
+      success: true,
+      message: "University email successfully verified!",
+      user: updatedUser ? { ...updatedUser, password: undefined } : null,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// POST /api/auth/resend-verification
+router.post("/resend-verification", authRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const user = await storage.getUserByEmail(email);
+    if (!user) {
+      // Avoid user enumeration
+      return res.json({ message: "If an account exists, a verification link has been generated." });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Account is already verified" });
+    }
+
+    const verificationHex = randomBytes(24).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const token = await storage.createVerificationToken({
+      userId: user.id,
+      token: verificationHex,
+      type: "email_verification",
+      expiresAt,
+    });
+
+    res.json({
+      success: true,
+      token: token.token,
+      message: "A new verification token has been generated.",
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
   }
 });
 
@@ -86,12 +174,12 @@ router.post("/login", authRateLimiter, async (req: Request, res: Response) => {
 
     const user = await storage.getUserByEmail(email);
     if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({ message: "Invalid email or password" });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({ message: "Invalid email or password" });
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });

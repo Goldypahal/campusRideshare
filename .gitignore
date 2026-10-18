@@ -13,3 +13,6 @@ vite.config.ts.*
 *.zip
 temp_stitch
 temp_stitch/
+__pycache__/
+*.py[cod]
+.pytest_cache/

@@ -60,13 +60,15 @@ export const rideRequests = pgTable("ride_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   rideId: varchar("ride_id").notNull().references(() => rides.id),
   passengerId: varchar("passenger_id").notNull().references(() => users.id),
-  status: text("status").default("pending"), // pending, accepted, rejected
+  seatsRequested: integer("seats_requested").notNull().default(1),
+  status: text("status").default("pending"), // pending, accepted, rejected, cancelled
   message: text("message"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => {
   return {
     rideIdx: index("ride_requests_ride_idx").on(table.rideId),
     passengerIdx: index("ride_requests_passenger_idx").on(table.passengerId),
+    ridePassengerStatusIdx: index("ride_requests_passenger_status_idx").on(table.rideId, table.passengerId, table.status),
   };
 });
 
@@ -111,6 +113,57 @@ export const rideEvents = pgTable("ride_events", {
   };
 });
 
+export const verificationTokens = pgTable("verification_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  token: text("token").notNull().unique(),
+  type: text("type").notNull(), // "email_verification" | "password_reset"
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    tokenIdx: index("verification_tokens_token_idx").on(table.token),
+    userIdIdx: index("verification_tokens_user_idx").on(table.userId),
+  };
+});
+
+export const safetyIncidents = pgTable("safety_incidents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  rideId: varchar("ride_id").references(() => rides.id),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("active"), // active, acknowledged, resolved
+  severity: text("severity").notNull().default("critical"), // warning, critical
+  acknowledgedBy: varchar("acknowledged_by").references(() => users.id),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    statusIdx: index("safety_incidents_status_idx").on(table.status),
+    userIdx: index("safety_incidents_user_idx").on(table.userId),
+    rideIdx: index("safety_incidents_ride_idx").on(table.rideId),
+  };
+});
+
+export function isValidUniversityEmail(email: string): boolean {
+  if (!email || !email.includes("@")) return false;
+  const domain = email.split("@")[1].toLowerCase();
+  
+  if (domain.endsWith(".edu") || domain.endsWith(".ac.in") || domain.endsWith(".edu.in")) {
+    return true;
+  }
+  
+  const customDomains = (typeof process !== "undefined" && process.env?.ALLOWED_EMAIL_DOMAINS)
+    ? process.env.ALLOWED_EMAIL_DOMAINS.split(",").map(d => d.trim().toLowerCase())
+    : [];
+  
+  return customDomains.some(cd => domain === cd || domain.endsWith("." + cd));
+}
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   isVerified: true,
@@ -121,8 +174,8 @@ export const insertUserSchema = createInsertSchema(users).omit({
   trustScore: true,
   createdAt: true,
 }).extend({
-  email: z.string().email().refine(email => email.endsWith('.edu'), {
-    message: "Must be a valid university email (.edu domain)"
+  email: z.string().email().refine(isValidUniversityEmail, {
+    message: "Must be a valid university/institutional email (.edu, .ac.in, or approved campus domain)"
   }),
   password: z.string().min(6, "Password must be at least 6 characters"),
   academicYear: z.enum(["Freshman", "Sophomore", "Junior", "Senior", "Graduate"]),
@@ -152,12 +205,16 @@ export const insertRideRequestSchema = createInsertSchema(rideRequests).omit({
   passengerId: true,
   status: true,
   createdAt: true,
+}).extend({
+  seatsRequested: z.number().min(1).max(4).default(1),
 });
 
 export const insertMessageSchema = createInsertSchema(messages).omit({
   id: true,
   fromUserId: true,
   createdAt: true,
+}).extend({
+  content: z.string().min(1, "Message cannot be empty").max(2000, "Message cannot exceed 2000 characters"),
 });
 
 export const insertRatingSchema = createInsertSchema(ratings).omit({
@@ -166,6 +223,21 @@ export const insertRatingSchema = createInsertSchema(ratings).omit({
   createdAt: true,
 }).extend({
   rating: z.number().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+export const insertSafetyIncidentSchema = createInsertSchema(safetyIncidents).omit({
+  id: true,
+  acknowledgedBy: true,
+  acknowledgedAt: true,
+  resolvedAt: true,
+  createdAt: true,
+});
+
+export const insertVerificationTokenSchema = createInsertSchema(verificationTokens).omit({
+  id: true,
+  usedAt: true,
+  createdAt: true,
 });
 
 export const insertRideEventSchema = createInsertSchema(rideEvents).omit({
@@ -190,6 +262,11 @@ export type InsertRating = z.infer<typeof insertRatingSchema>;
 export type Rating = typeof ratings.$inferSelect;
 export type InsertRideEvent = z.infer<typeof insertRideEventSchema>;
 export type RideEvent = typeof rideEvents.$inferSelect;
+export type InsertSafetyIncident = z.infer<typeof insertSafetyIncidentSchema>;
+export type SafetyIncident = typeof safetyIncidents.$inferSelect;
+export type InsertVerificationToken = z.infer<typeof insertVerificationTokenSchema>;
+export type VerificationToken = typeof verificationTokens.$inferSelect;
 export type LoginData = z.infer<typeof loginSchema>;
+
 
 

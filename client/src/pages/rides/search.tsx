@@ -126,7 +126,8 @@ export default function SearchRides() {
     });
   };
 
-  const currentRidesList = activeTab === "smart" ? smartMatches : rides;
+  const rawRides = Array.isArray(rides) ? rides : (rides?.items || []);
+  const currentRidesList = activeTab === "smart" ? smartMatches : rawRides;
   const isLoading = activeTab === "smart" ? isSmartLoading : isRidesLoading;
 
   const filteredRides = filterAndSortRides(

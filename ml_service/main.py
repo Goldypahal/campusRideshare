@@ -17,22 +17,41 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 matching_model = None
 eta_model = None
 
+# Model Registry mapping
+MODEL_REGISTRY = {
+    "xgb": "matching_xgb.pkl",
+    "rf": "matching_rf.pkl",
+    "lr": "matching_lr.pkl",
+}
+
 def load_models():
     global matching_model, eta_model
-    xgb_path = os.path.join(MODEL_DIR, "matching_xgb.pkl")
-    rf_path = os.path.join(MODEL_DIR, "matching_rf.pkl")
+    selected_type = os.getenv("MATCHING_MODEL_TYPE", "xgb")
+    
+    # Order of preference: selected env -> xgb -> rf -> lr
+    candidate_paths = [
+        os.path.join(MODEL_DIR, MODEL_REGISTRY.get(selected_type, "matching_xgb.pkl")),
+        os.path.join(MODEL_DIR, "matching_xgb.pkl"),
+        os.path.join(MODEL_DIR, "matching_rf.pkl"),
+        os.path.join(MODEL_DIR, "matching_lr.pkl"),
+    ]
+
+    for path in candidate_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as f:
+                    matching_model = pickle.load(f)
+                break
+            except Exception:
+                continue
+
     eta_path = os.path.join(MODEL_DIR, "eta_rf.pkl")
-
-    if os.path.exists(xgb_path):
-        with open(xgb_path, "rb") as f:
-            matching_model = pickle.load(f)
-    elif os.path.exists(rf_path):
-        with open(rf_path, "rb") as f:
-            matching_model = pickle.load(f)
-
     if os.path.exists(eta_path):
-        with open(eta_path, "rb") as f:
-            eta_model = pickle.load(f)
+        try:
+            with open(eta_path, "rb") as f:
+                eta_model = pickle.load(f)
+        except Exception:
+            eta_model = None
 
 @app.on_event("startup")
 def startup_event():
@@ -148,7 +167,7 @@ def predict_matches(req: MatchRequest):
         score = int(round(float(prob) * 100))
         reasons = []
         if c.route_overlap_pct >= 80:
-            reasons.push(f"High route overlap ({int(c.route_overlap_pct)}%)")
+            reasons.append(f"High route overlap ({int(c.route_overlap_pct)}%)")
         elif c.route_overlap_pct >= 50:
             reasons.append(f"{int(c.route_overlap_pct)}% route similarity")
 
@@ -171,6 +190,7 @@ def predict_matches(req: MatchRequest):
     # Sort descending by match score
     predictions.sort(key=lambda x: x.match_score, reverse=True)
     return MatchResponse(ranked_rides=predictions, model_version="v2-ml-ranker")
+
 
 
 @app.post("/predict/eta", response_model=ETAResponse)

@@ -1,10 +1,17 @@
 import assert from "node:assert";
-import { insertUserSchema, insertRideSchema } from "../../shared/schema";
+import {
+  insertUserSchema,
+  insertRideSchema,
+  insertRideRequestSchema,
+  insertMessageSchema,
+  insertSafetyIncidentSchema,
+  insertVerificationTokenSchema,
+} from "../../shared/schema";
 
-console.log("🧪 Running CampusRideshare schema tests...");
+console.log("🧪 Running CampusRideshare schema validation tests...");
 
 // Test 1: Valid .edu email
-const validUser = insertUserSchema.safeParse({
+const validEduUser = insertUserSchema.safeParse({
   email: "student@university.edu",
   password: "securepassword123",
   fullName: "Alex Rivera",
@@ -12,10 +19,22 @@ const validUser = insertUserSchema.safeParse({
   gender: "Non-binary",
   major: "Computer Science",
 });
-assert.strictEqual(validUser.success, true, "Valid .edu email should pass validation");
+assert.strictEqual(validEduUser.success, true, "Valid .edu email should pass validation");
 console.log("✅ Test 1 Passed: Valid .edu email accepted");
 
-// Test 2: Invalid non-.edu email
+// Test 2: Valid Indian university email (.ac.in)
+const validIndianUser = insertUserSchema.safeParse({
+  email: "student@iitd.ac.in",
+  password: "securepassword123",
+  fullName: "Rohan Sharma",
+  academicYear: "Senior",
+  gender: "Male",
+  major: "Electrical Engineering",
+});
+assert.strictEqual(validIndianUser.success, true, "Valid .ac.in Indian university email should pass validation");
+console.log("✅ Test 2 Passed: Valid .ac.in email accepted");
+
+// Test 3: Invalid generic email (gmail.com)
 const invalidUser = insertUserSchema.safeParse({
   email: "student@gmail.com",
   password: "securepassword123",
@@ -24,10 +43,10 @@ const invalidUser = insertUserSchema.safeParse({
   gender: "Non-binary",
   major: "Computer Science",
 });
-assert.strictEqual(invalidUser.success, false, "Non-.edu email must fail validation");
-console.log("✅ Test 2 Passed: Non-.edu email correctly rejected");
+assert.strictEqual(invalidUser.success, false, "Non-institutional email must fail validation");
+console.log("✅ Test 3 Passed: Non-institutional email correctly rejected");
 
-// Test 3: Valid seats count
+// Test 4: Valid seats count (3 seats)
 const validRide = insertRideSchema.safeParse({
   origin: "North Campus Quad",
   destination: "Downtown Station",
@@ -37,9 +56,9 @@ const validRide = insertRideSchema.safeParse({
   costPerPerson: 5,
 });
 assert.strictEqual(validRide.success, true, "Valid ride seats should pass validation");
-console.log("✅ Test 3 Passed: Valid ride seats count accepted");
+console.log("✅ Test 4 Passed: Valid ride seats count accepted");
 
-// Test 4: Invalid seats count (> 4)
+// Test 5: Invalid seats count (> 4)
 const invalidRide = insertRideSchema.safeParse({
   origin: "North Campus Quad",
   destination: "Downtown Station",
@@ -49,6 +68,52 @@ const invalidRide = insertRideSchema.safeParse({
   costPerPerson: 5,
 });
 assert.strictEqual(invalidRide.success, false, "Available seats > 4 must fail validation");
-console.log("✅ Test 4 Passed: Seat count > 4 correctly rejected");
+console.log("✅ Test 5 Passed: Seat count > 4 correctly rejected");
 
-console.log("🎉 All 4 schema tests passed successfully!");
+// Test 6: Ride request with requested seats
+const validRideReq = insertRideRequestSchema.safeParse({
+  rideId: "ride-123",
+  seatsRequested: 2,
+  message: "Heading to the same library session",
+});
+assert.strictEqual(validRideReq.success, true, "Valid ride request with seatsRequested should pass");
+console.log("✅ Test 6 Passed: Ride request with seatsRequested validated");
+
+// Test 7: Message length constraints
+const emptyMessage = insertMessageSchema.safeParse({
+  toUserId: "user-456",
+  content: "",
+});
+assert.strictEqual(emptyMessage.success, false, "Empty message should fail validation");
+
+const validMessage = insertMessageSchema.safeParse({
+  toUserId: "user-456",
+  content: "Hey, are you still leaving at 2:00 PM?",
+});
+assert.strictEqual(validMessage.success, true, "Valid message should pass validation");
+console.log("✅ Test 7 Passed: Message length validation enforced");
+
+// Test 8: Safety incident schema validation
+const validIncident = insertSafetyIncidentSchema.safeParse({
+  userId: "user-123",
+  rideId: "ride-456",
+  latitude: 28.545,
+  longitude: 77.192,
+  message: "Suspicious vehicle deviation",
+  severity: "critical",
+  status: "active",
+});
+assert.strictEqual(validIncident.success, true, "Valid safety incident should pass validation");
+console.log("✅ Test 8 Passed: Safety incident schema validated");
+
+// Test 9: Verification token schema validation
+const validToken = insertVerificationTokenSchema.safeParse({
+  userId: "user-123",
+  token: "abc123token456",
+  type: "email_verification",
+  expiresAt: new Date(Date.now() + 86400000),
+});
+assert.strictEqual(validToken.success, true, "Valid verification token should pass validation");
+console.log("✅ Test 9 Passed: Verification token schema validated");
+
+console.log("🎉 All 9 schema tests passed successfully!");
