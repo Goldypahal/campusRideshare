@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, real, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, real, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -17,6 +17,7 @@ export const users = pgTable("users", {
   cancellationCount: integer("cancellation_count").default(0),
   completedRidesCount: integer("completed_rides_count").default(0),
   trustScore: integer("trust_score").default(85),
+  role: text("role").default("student"), // student, responder, admin
   homeAirport: text("home_airport"),
   housingZone: text("housing_zone"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -96,6 +97,7 @@ export const ratings = pgTable("ratings", {
 }, (table) => {
   return {
     toUserIdx: index("ratings_to_user_idx").on(table.toUserId),
+    uniqueRideReviewIdx: uniqueIndex("ratings_ride_from_to_idx").on(table.rideId, table.fromUserId, table.toUserId),
   };
 });
 
@@ -137,8 +139,10 @@ export const safetyIncidents = pgTable("safety_incidents", {
   message: text("message").notNull(),
   status: text("status").notNull().default("active"), // active, acknowledged, resolved
   severity: text("severity").notNull().default("critical"), // warning, critical
+  dispatchStatus: text("dispatch_status").notNull().default("persisted"), // persisted, dispatch_pending, delivered_to_responder, acknowledged, resolved
   acknowledgedBy: varchar("acknowledged_by").references(() => users.id),
   acknowledgedAt: timestamp("acknowledged_at"),
+  resolvedBy: varchar("resolved_by").references(() => users.id),
   resolvedAt: timestamp("resolved_at"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => {
@@ -180,6 +184,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
   password: z.string().min(6, "Password must be at least 6 characters"),
   academicYear: z.enum(["Freshman", "Sophomore", "Junior", "Senior", "Graduate"]),
   gender: z.enum(["Female", "Male", "Non-binary", "Prefer not to say"]),
+  role: z.enum(["student", "responder", "admin"]).default("student").optional(),
   homeAirport: z.string().optional(),
   housingZone: z.string().optional(),
 });
@@ -230,8 +235,11 @@ export const insertSafetyIncidentSchema = createInsertSchema(safetyIncidents).om
   id: true,
   acknowledgedBy: true,
   acknowledgedAt: true,
+  resolvedBy: true,
   resolvedAt: true,
   createdAt: true,
+}).extend({
+  dispatchStatus: z.string().optional(),
 });
 
 export const insertVerificationTokenSchema = createInsertSchema(verificationTokens).omit({

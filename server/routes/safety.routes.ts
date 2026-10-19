@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { storage } from "../storage";
 import { insertSafetyIncidentSchema } from "@shared/schema";
-import { authenticateToken, type AuthRequest } from "./auth.routes";
+import { authenticateToken, requireRole, type AuthRequest } from "./auth.routes";
 import { logTelemetryEvent } from "../services/telemetry.service";
 
 const router = Router();
@@ -21,8 +21,20 @@ async function handleCreateIncident(req: AuthRequest, res: Response) {
       status: "active",
     });
 
-    // Durable database storage
-    const incident = await storage.createSafetyIncident(validatedData);
+    // 1. Determine responder connectivity to track honest delivery state
+    const respondersOnline = (req.app as any).getConnectedRespondersCount
+      ? (req.app as any).getConnectedRespondersCount()
+      : 0;
+
+    const initialDispatchStatus = respondersOnline > 0
+      ? "delivered_to_responder"
+      : "dispatch_pending";
+
+    // 2. Durable database storage
+    const incident = await storage.createSafetyIncident({
+      ...validatedData,
+      dispatchStatus: initialDispatchStatus,
+    });
     const user = await storage.getUser(req.user!.id);
 
     const alertPayload = {
@@ -33,17 +45,17 @@ async function handleCreateIncident(req: AuthRequest, res: Response) {
       },
     };
 
-    // 1. Dispatch directly to campus emergency handlers & monitors
+    // 3. Dispatch directly to campus emergency handlers & monitors
     if ((req.app as any).sendToIncidentHandlers) {
       (req.app as any).sendToIncidentHandlers(alertPayload);
     }
 
-    // 2. Dispatch to participants of this specific ride if in-transit
+    // 4. Dispatch to participants of this specific ride if in-transit
     if (rideId && (req.app as any).sendToRide) {
       (req.app as any).sendToRide(rideId, alertPayload);
     }
 
-    // 3. Confirm to the user's socket
+    // 5. Confirm to the user's socket
     if ((req.app as any).sendToUser) {
       (req.app as any).sendToUser(req.user!.id, {
         type: "incident_confirmed",
@@ -52,15 +64,21 @@ async function handleCreateIncident(req: AuthRequest, res: Response) {
       });
     }
 
-    logTelemetryEvent("CREATE_RIDE", req.user!.id, rideId, {
+    logTelemetryEvent("EMERGENCY_SOS", req.user!.id, rideId, {
       emergencyIncidentId: incident.id,
       severity: incident.severity,
+      respondersOnline,
     });
+
+    const deliveryStatus = respondersOnline > 0
+      ? "dispatched_to_active_responders"
+      : "persisted_queued_for_responders";
 
     res.status(201).json({
       ok: true,
       incident,
-      deliveryStatus: "persisted_and_dispatched_to_responders",
+      deliveryStatus,
+      respondersOnline,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -70,75 +88,153 @@ async function handleCreateIncident(req: AuthRequest, res: Response) {
 router.post("/incidents", authenticateToken, handleCreateIncident);
 router.post("/sos", authenticateToken, handleCreateIncident); // Backward compatibility
 
-// GET /api/safety/incidents/active (Emergency Monitor Dashboard)
-router.get("/incidents/active", authenticateToken, async (_req: AuthRequest, res: Response) => {
-  try {
-    const activeIncidents = await storage.listActiveIncidents();
-    res.json(activeIncidents);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+// GET /api/safety/incidents/active (Emergency Monitor Dashboard - Responders & Admins Only)
+router.get(
+  "/incidents/active",
+  authenticateToken,
+  requireRole(["responder", "admin"]),
+  async (_req: AuthRequest, res: Response) => {
+    try {
+      const activeIncidents = await storage.listActiveIncidents();
+      res.json(activeIncidents);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
   }
-});
+);
 
-// GET /api/safety/incidents/:id
+// GET /api/safety/incidents/:id (Restricted to Creator, Involved Co-riders, or Responders)
 router.get("/incidents/:id", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const incident = await storage.getSafetyIncident(req.params.id);
     if (!incident) return res.status(404).json({ message: "Incident not found" });
+
+    const currentUserId = req.user!.id;
+    const currentUserRole = req.user!.role || "student";
+
+    const isCreator = incident.userId === currentUserId;
+    const isStaff = ["responder", "admin"].includes(currentUserRole);
+
+    let isRideParticipant = false;
+    if (incident.rideId) {
+      const ride = await storage.getRide(incident.rideId);
+      if (ride) {
+        if (ride.driverId === currentUserId) {
+          isRideParticipant = true;
+        } else {
+          const reqs = await storage.getRideRequestsByRide(incident.rideId);
+          isRideParticipant = reqs.some(
+            (r) => r.passengerId === currentUserId && r.status === "accepted"
+          );
+        }
+      }
+    }
+
+    if (!isCreator && !isStaff && !isRideParticipant) {
+      return res.status(403).json({
+        message: "Access denied: You are not authorized to view this emergency incident record.",
+      });
+    }
+
+    // Audit access to sensitive incident records
+    logTelemetryEvent("SAFETY_INCIDENT_ACCESSED", currentUserId, incident.rideId || undefined, {
+      incidentId: req.params.id,
+      role: currentUserRole,
+    });
+
     res.json(incident);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// PATCH /api/safety/incidents/:id/acknowledge
-router.patch("/incidents/:id/acknowledge", authenticateToken, async (req: AuthRequest, res: Response) => {
-  try {
-    const incident = await storage.getSafetyIncident(req.params.id);
-    if (!incident) return res.status(404).json({ message: "Incident not found" });
+// PATCH /api/safety/incidents/:id/acknowledge (Responders & Admins Only with Legal State Transition)
+router.patch(
+  "/incidents/:id/acknowledge",
+  authenticateToken,
+  requireRole(["responder", "admin"]),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const incident = await storage.getSafetyIncident(req.params.id);
+      if (!incident) return res.status(404).json({ message: "Incident not found" });
 
-    const updated = await storage.updateSafetyIncident(req.params.id, {
-      status: "acknowledged",
-      acknowledgedBy: req.user!.id,
-      acknowledgedAt: new Date(),
-    });
+      if (incident.status !== "active") {
+        return res.status(400).json({
+          message: `Cannot acknowledge incident that is already '${incident.status}'. Only active alerts can be acknowledged.`,
+        });
+      }
 
-    // Notify incident creator that responders acknowledged the emergency
-    if ((req.app as any).sendToUser && incident.userId) {
-      (req.app as any).sendToUser(incident.userId, {
-        type: "incident_acknowledged",
-        incidentId: req.params.id,
+      const updated = await storage.updateSafetyIncident(req.params.id, {
+        status: "acknowledged",
+        dispatchStatus: "acknowledged",
+        acknowledgedBy: req.user!.id,
+        acknowledgedAt: new Date(),
       });
-    }
 
-    res.json(updated);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// PATCH /api/safety/incidents/:id/resolve
-router.patch("/incidents/:id/resolve", authenticateToken, async (req: AuthRequest, res: Response) => {
-  try {
-    const incident = await storage.getSafetyIncident(req.params.id);
-    if (!incident) return res.status(404).json({ message: "Incident not found" });
-
-    const updated = await storage.updateSafetyIncident(req.params.id, {
-      status: "resolved",
-      resolvedAt: new Date(),
-    });
-
-    if ((req.app as any).sendToUser && incident.userId) {
-      (req.app as any).sendToUser(incident.userId, {
-        type: "incident_resolved",
+      // Audit acknowledgement
+      logTelemetryEvent("SAFETY_INCIDENT_ACKNOWLEDGED", req.user!.id, incident.rideId || undefined, {
         incidentId: req.params.id,
+        acknowledgedBy: req.user!.id,
       });
-    }
 
-    res.json(updated);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+      // Notify incident creator that responders acknowledged the emergency
+      if ((req.app as any).sendToUser && incident.userId) {
+        (req.app as any).sendToUser(incident.userId, {
+          type: "incident_acknowledged",
+          incidentId: req.params.id,
+          acknowledgedBy: req.user!.id,
+        });
+      }
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
   }
-});
+);
+
+// PATCH /api/safety/incidents/:id/resolve (Responders & Admins Only with Legal State Transition)
+router.patch(
+  "/incidents/:id/resolve",
+  authenticateToken,
+  requireRole(["responder", "admin"]),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const incident = await storage.getSafetyIncident(req.params.id);
+      if (!incident) return res.status(404).json({ message: "Incident not found" });
+
+      if (incident.status === "resolved") {
+        return res.status(400).json({
+          message: "Incident is already marked resolved.",
+        });
+      }
+
+      const updated = await storage.updateSafetyIncident(req.params.id, {
+        status: "resolved",
+        dispatchStatus: "resolved",
+        resolvedBy: req.user!.id,
+        resolvedAt: new Date(),
+      });
+
+      // Audit resolution
+      logTelemetryEvent("SAFETY_INCIDENT_RESOLVED", req.user!.id, incident.rideId || undefined, {
+        incidentId: req.params.id,
+        resolvedBy: req.user!.id,
+      });
+
+      if ((req.app as any).sendToUser && incident.userId) {
+        (req.app as any).sendToUser(incident.userId, {
+          type: "incident_resolved",
+          incidentId: req.params.id,
+          resolvedBy: req.user!.id,
+        });
+      }
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
 
 export default router;

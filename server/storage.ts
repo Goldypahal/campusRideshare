@@ -123,6 +123,14 @@ export interface IStorage {
   listActiveIncidents(): Promise<SafetyIncident[]>;
 }
 
+export class TransactionError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode: number = 400) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
     if (!db) return undefined;
@@ -140,6 +148,7 @@ export class DatabaseStorage implements IStorage {
     if (!db) throw new Error("Database not connected");
     const [user] = await db.insert(users).values({
       ...insertUser,
+      role: insertUser.role ?? "student",
       homeAirport: insertUser.homeAirport ?? null,
       housingZone: insertUser.housingZone ?? null,
     }).returning();
@@ -294,58 +303,67 @@ export class DatabaseStorage implements IStorage {
   }> {
     if (!db) throw new Error("Database not connected");
 
-    const request = await this.getRideRequest(requestId);
-    if (!request) {
-      return { success: false, error: "Request not found", statusCode: 404 };
+    try {
+      return await db.transaction(async (tx) => {
+        const [request] = await tx
+          .select()
+          .from(rideRequests)
+          .where(eq(rideRequests.id, requestId));
+
+        if (!request) {
+          return { success: false, error: "Request not found", statusCode: 404 };
+        }
+        if (request.status !== "pending") {
+          return { success: false, error: `Request already ${request.status}`, statusCode: 400 };
+        }
+
+        const [ride] = await tx
+          .select()
+          .from(rides)
+          .where(eq(rides.id, request.rideId));
+
+        if (!ride || ride.driverId !== driverUserId) {
+          return { success: false, error: "Not authorized to update this request", statusCode: 403 };
+        }
+
+        const seatsToReserve = request.seatsRequested || 1;
+        if (ride.availableSeats < seatsToReserve) {
+          return { success: false, error: `Not enough available seats (requested ${seatsToReserve}, available ${ride.availableSeats})`, statusCode: 400 };
+        }
+
+        // Atomically reserve seats conditionally within database transaction
+        const [updatedRide] = await tx
+          .update(rides)
+          .set({
+            availableSeats: sql`${rides.availableSeats} - ${seatsToReserve}`,
+            status: sql`CASE WHEN ${rides.availableSeats} - ${seatsToReserve} <= 0 THEN 'full' ELSE ${rides.status} END`,
+          })
+          .where(and(eq(rides.id, ride.id), gte(rides.availableSeats, seatsToReserve)))
+          .returning();
+
+        if (!updatedRide) {
+          throw new TransactionError("No available seats remaining for this ride", 400);
+        }
+
+        // Atomically set status to accepted within database transaction
+        const [updatedRequest] = await tx
+          .update(rideRequests)
+          .set({ status: "accepted" })
+          .where(and(eq(rideRequests.id, requestId), eq(rideRequests.status, "pending")))
+          .returning();
+
+        if (!updatedRequest) {
+          throw new TransactionError("Request was modified concurrently", 409);
+        }
+
+        return { success: true, request: updatedRequest, ride: updatedRide };
+      });
+    } catch (err: any) {
+      if (err instanceof TransactionError) {
+        return { success: false, error: err.message, statusCode: err.statusCode };
+      }
+      throw err;
     }
-    if (request.status !== "pending") {
-      return { success: false, error: `Request already ${request.status}`, statusCode: 400 };
-    }
-
-    const ride = await this.getRide(request.rideId);
-    if (!ride || ride.driverId !== driverUserId) {
-      return { success: false, error: "Not authorized to update this request", statusCode: 403 };
-    }
-
-    const seatsToReserve = request.seatsRequested || 1;
-    if (ride.availableSeats < seatsToReserve) {
-      return { success: false, error: `Not enough available seats (requested ${seatsToReserve}, available ${ride.availableSeats})`, statusCode: 400 };
-    }
-
-    // Atomically reserve seats conditionally
-    const [updatedRide] = await db
-      .update(rides)
-      .set({
-        availableSeats: sql`${rides.availableSeats} - ${seatsToReserve}`,
-        status: sql`CASE WHEN ${rides.availableSeats} - ${seatsToReserve} <= 0 THEN 'full' ELSE ${rides.status} END`,
-      })
-      .where(and(eq(rides.id, ride.id), gte(rides.availableSeats, seatsToReserve)))
-      .returning();
-
-    if (!updatedRide) {
-      return { success: false, error: "No available seats remaining for this ride", statusCode: 400 };
-    }
-
-    // Atomically set status to accepted
-    const [updatedRequest] = await db
-      .update(rideRequests)
-      .set({ status: "accepted" })
-      .where(and(eq(rideRequests.id, requestId), eq(rideRequests.status, "pending")))
-      .returning();
-
-    if (!updatedRequest) {
-      // Rollback seat reservation if request could not be accepted
-      await db
-        .update(rides)
-        .set({
-          availableSeats: sql`${rides.availableSeats} + ${seatsToReserve}`,
-          status: sql`CASE WHEN ${rides.status} = 'full' THEN 'active' ELSE ${rides.status} END`,
-        })
-        .where(eq(rides.id, ride.id));
-      return { success: false, error: "Request was modified concurrently", statusCode: 409 };
-    }
-
-    return { success: true, request: updatedRequest, ride: updatedRide };
   }
 
   async cancelRideRequestAtomic(requestId: string, userId: string): Promise<{
@@ -357,48 +375,69 @@ export class DatabaseStorage implements IStorage {
   }> {
     if (!db) throw new Error("Database not connected");
 
-    const request = await this.getRideRequest(requestId);
-    if (!request) {
-      return { success: false, error: "Request not found", statusCode: 404 };
+    try {
+      return await db.transaction(async (tx) => {
+        const [request] = await tx
+          .select()
+          .from(rideRequests)
+          .where(eq(rideRequests.id, requestId));
+
+        if (!request) {
+          return { success: false, error: "Request not found", statusCode: 404 };
+        }
+
+        const [ride] = await tx
+          .select()
+          .from(rides)
+          .where(eq(rides.id, request.rideId));
+
+        if (!ride) {
+          return { success: false, error: "Associated ride not found", statusCode: 404 };
+        }
+
+        // Must be either passenger or driver to cancel
+        if (request.passengerId !== userId && ride.driverId !== userId) {
+          return { success: false, error: "Not authorized to cancel this request", statusCode: 403 };
+        }
+
+        if (request.status === "cancelled" || request.status === "rejected") {
+          return { success: false, error: `Request is already ${request.status}`, statusCode: 400 };
+        }
+
+        const wasAccepted = request.status === "accepted";
+        const seatsToRestore = request.seatsRequested || 1;
+
+        const [updatedRequest] = await tx
+          .update(rideRequests)
+          .set({ status: "cancelled" })
+          .where(and(eq(rideRequests.id, requestId), or(eq(rideRequests.status, "pending"), eq(rideRequests.status, "accepted"))))
+          .returning();
+
+        if (!updatedRequest) {
+          throw new TransactionError("Request status changed concurrently", 409);
+        }
+
+        let updatedRide = ride;
+        if (wasAccepted) {
+          const [restoredRide] = await tx
+            .update(rides)
+            .set({
+              availableSeats: sql`${rides.availableSeats} + ${seatsToRestore}`,
+              status: sql`CASE WHEN ${rides.status} = 'full' THEN 'active' ELSE ${rides.status} END`,
+            })
+            .where(eq(rides.id, ride.id))
+            .returning();
+          if (restoredRide) updatedRide = restoredRide;
+        }
+
+        return { success: true, request: updatedRequest, ride: updatedRide };
+      });
+    } catch (err: any) {
+      if (err instanceof TransactionError) {
+        return { success: false, error: err.message, statusCode: err.statusCode };
+      }
+      throw err;
     }
-
-    const ride = await this.getRide(request.rideId);
-    if (!ride) {
-      return { success: false, error: "Associated ride not found", statusCode: 404 };
-    }
-
-    // Must be either passenger or driver to cancel
-    if (request.passengerId !== userId && ride.driverId !== userId) {
-      return { success: false, error: "Not authorized to cancel this request", statusCode: 403 };
-    }
-
-    if (request.status === "cancelled" || request.status === "rejected") {
-      return { success: false, error: `Request is already ${request.status}`, statusCode: 400 };
-    }
-
-    const wasAccepted = request.status === "accepted";
-    const seatsToRestore = request.seatsRequested || 1;
-
-    const [updatedRequest] = await db
-      .update(rideRequests)
-      .set({ status: "cancelled" })
-      .where(eq(rideRequests.id, requestId))
-      .returning();
-
-    let updatedRide = ride;
-    if (wasAccepted) {
-      const [restoredRide] = await db
-        .update(rides)
-        .set({
-          availableSeats: sql`${rides.availableSeats} + ${seatsToRestore}`,
-          status: sql`CASE WHEN ${rides.status} = 'full' THEN 'active' ELSE ${rides.status} END`,
-        })
-        .where(eq(rides.id, ride.id))
-        .returning();
-      if (restoredRide) updatedRide = restoredRide;
-    }
-
-    return { success: true, request: updatedRequest, ride: updatedRide };
   }
 
   async canUsersCommunicate(user1Id: string, user2Id: string, rideId?: string): Promise<boolean> {
@@ -606,11 +645,14 @@ export class DatabaseStorage implements IStorage {
     if (!db) throw new Error("Database not connected");
     const [incident] = await db.insert(safetyIncidents).values({
       ...incidentData,
+      dispatchStatus: (incidentData as any).dispatchStatus ?? "persisted",
       rideId: incidentData.rideId ?? null,
       latitude: incidentData.latitude ?? null,
       longitude: incidentData.longitude ?? null,
       severity: incidentData.severity ?? "critical",
       status: incidentData.status ?? "active",
+      resolvedBy: null,
+      resolvedAt: null,
     }).returning();
     return incident;
   }
@@ -667,6 +709,7 @@ export class MemStorage implements IStorage {
     const user: User = {
       ...insertUser,
       id,
+      role: insertUser.role ?? "student",
       isVerified: false,
       rating: 0,
       totalRides: 0,
@@ -1097,7 +1140,7 @@ export class MemStorage implements IStorage {
   }
 
   async markTokenUsed(id: string): Promise<void> {
-    for (const [key, token] of this.tokensMap.entries()) {
+    for (const [key, token] of Array.from(this.tokensMap.entries())) {
       if (token.id === id) {
         token.usedAt = new Date();
         this.tokensMap.set(key, token);
@@ -1112,6 +1155,7 @@ export class MemStorage implements IStorage {
     const incident: SafetyIncident = {
       ...incidentData,
       id,
+      dispatchStatus: (incidentData as any).dispatchStatus ?? "persisted",
       rideId: incidentData.rideId ?? null,
       latitude: incidentData.latitude ?? null,
       longitude: incidentData.longitude ?? null,
@@ -1119,6 +1163,7 @@ export class MemStorage implements IStorage {
       severity: incidentData.severity ?? "critical",
       acknowledgedBy: null,
       acknowledgedAt: null,
+      resolvedBy: null,
       resolvedAt: null,
       createdAt: new Date(),
     };

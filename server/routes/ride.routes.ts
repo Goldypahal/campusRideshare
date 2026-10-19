@@ -135,5 +135,46 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
   }
 });
 
+// PATCH /api/rides/:id (Driver can update status e.g. completed, cancelled, or details)
+router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const ride = await storage.getRide(req.params.id);
+    if (!ride) return res.status(404).json({ message: "Ride not found" });
+
+    if (ride.driverId !== req.user!.id) {
+      return res.status(403).json({ message: "Not authorized to update this ride" });
+    }
+
+    const { status, notes, vehicle } = req.body;
+    const allowedStatuses = ["active", "full", "completed", "cancelled"];
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(", ")}` });
+    }
+
+    const updatedRide = await storage.updateRide(req.params.id, {
+      ...(status ? { status } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      ...(vehicle !== undefined ? { vehicle } : {}),
+    });
+
+    if (status === "completed") {
+      logTelemetryEvent("COMPLETE_RIDE", req.user!.id, ride.id);
+    } else if (status === "cancelled") {
+      logTelemetryEvent("CANCEL_RIDE", req.user!.id, ride.id);
+    }
+
+    if ((req.app as any).sendToRide) {
+      (req.app as any).sendToRide(ride.id, {
+        type: "ride_updated",
+        ride: updatedRide,
+      });
+    }
+
+    res.json(updatedRide);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;
 

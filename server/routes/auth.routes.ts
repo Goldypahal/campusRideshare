@@ -10,7 +10,7 @@ const router = Router();
 const JWT_SECRET = env.JWT_SECRET;
 
 export interface AuthRequest extends Request {
-  user?: { id: string; email: string };
+  user?: { id: string; email: string; role?: string };
 }
 
 // -------------------- Rate Limiter --------------------
@@ -45,15 +45,31 @@ export const authenticateToken = async (
   if (!token) return res.status(401).json({ message: "Access token required" });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string; role?: string };
     const user = await storage.getUser(decoded.id);
     if (!user) return res.status(401).json({ message: "Invalid token" });
 
-    req.user = decoded;
+    req.user = { id: user.id, email: user.email, role: user.role || decoded.role || "student" };
     next();
   } catch (error) {
     return res.status(403).json({ message: "Invalid or expired token" });
   }
+};
+
+// -------------------- Role Authorization Middleware --------------------
+export const requireRole = (allowedRoles: string[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    const role = req.user.role || "student";
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        message: `Access denied: Requires one of [${allowedRoles.join(", ")}] roles. Current role: ${role}`,
+      });
+    }
+    next();
+  };
 };
 
 // POST /api/auth/register
@@ -80,7 +96,11 @@ router.post("/register", authRateLimiter, async (req: Request, res: Response) =>
       expiresAt,
     });
 
-    const jwtToken = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+    const jwtToken = jwt.sign(
+      { id: user.id, email: user.email, role: user.role || "student" },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.status(201).json({
       user: { ...user, password: undefined },
@@ -182,7 +202,11 @@ router.post("/login", authRateLimiter, async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid email or password" });
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role || "student" },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.json({
       user: { ...user, password: undefined },

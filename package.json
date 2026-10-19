@@ -7,10 +7,11 @@
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
     "build": "tsc",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
-    "test": "tsx server/__tests__/schema.test.ts && tsx server/__tests__/concurrency_and_matching.test.ts && tsx server/__tests__/authorization_and_safety.test.ts",
+    "test": "tsx server/__tests__/schema.test.ts && tsx server/__tests__/concurrency_and_matching.test.ts && tsx server/__tests__/authorization_and_safety.test.ts && tsx server/__tests__/http_api_integration.test.ts",
     "test:schema": "tsx server/__tests__/schema.test.ts",
     "test:concurrency": "tsx server/__tests__/concurrency_and_matching.test.ts",
-    "test:safety": "tsx server/__tests__/authorization_and_safety.test.ts"
+    "test:safety": "tsx server/__tests__/authorization_and_safety.test.ts",
+    "test:integration": "tsx server/__tests__/http_api_integration.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

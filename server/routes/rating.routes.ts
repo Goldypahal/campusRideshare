@@ -9,8 +9,11 @@ const router = Router();
 router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const ratingData = insertRatingSchema.parse(req.body);
-    const rating = await storage.createRating({ ...ratingData, fromUserId: req.user!.id });
-    res.status(201).json(rating);
+    const result = await storage.createRatingEligible({ ...ratingData, fromUserId: req.user!.id });
+    if (!result.success) {
+      return res.status(result.statusCode || 400).json({ message: result.error });
+    }
+    res.status(201).json(result.rating);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
   }

@@ -9,7 +9,11 @@ export type EventType =
   | "REJECT_REQUEST"
   | "CANCEL_RIDE"
   | "COMPLETE_RIDE"
-  | "RATE_RIDE";
+  | "RATE_RIDE"
+  | "EMERGENCY_SOS"
+  | "SAFETY_INCIDENT_ACKNOWLEDGED"
+  | "SAFETY_INCIDENT_RESOLVED"
+  | "SAFETY_INCIDENT_ACCESSED";
 
 /**
  * Asynchronously log user telemetry events without blocking main request lifecycle

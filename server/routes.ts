@@ -66,6 +66,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.ping();
     });
   }, 30000);
+  heartbeatInterval.unref();
+
+  httpServer.on("close", () => {
+    clearInterval(heartbeatInterval);
+    wss.close();
+  });
 
   wss.on("close", () => {
     clearInterval(heartbeatInterval);
@@ -278,6 +284,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   (app as any).sendToUser = sendToUser;
   (app as any).sendToRide = sendToRide;
   (app as any).sendToIncidentHandlers = sendToIncidentHandlers;
+  (app as any).getConnectedRespondersCount = () => incidentSockets.size;
   (app as any).broadcastPublicEvent = broadcastPublicEvent;
   // Keep broadcastWS backward-compatible for existing calls but make it safe (authenticated only)
   (app as any).broadcastWS = broadcastPublicEvent;
