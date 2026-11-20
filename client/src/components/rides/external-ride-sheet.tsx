@@ -110,10 +110,15 @@ export function ExternalRideSheet({
 
   // Handoff mutation
   const handoffMutation = useMutation({
-    mutationFn: async (providerId: "uber" | "ola" | "rapido") => {
+    mutationFn: async ({
+      providerId,
+      preOpenedWindow,
+    }: {
+      providerId: "uber" | "ola" | "rapido";
+      preOpenedWindow: Window | null;
+    }) => {
       setActiveProviderId(providerId);
 
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
       const isAndroid = /Android/i.test(navigator.userAgent);
       const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
       const platform = isAndroid ? "android" : isIOS ? "ios" : "web";
@@ -143,19 +148,38 @@ export function ExternalRideSheet({
 
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       setActiveProviderId(null);
       if (data?.url) {
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (isMobile) {
           window.location.href = data.url;
+        } else if (variables.preOpenedWindow) {
+          variables.preOpenedWindow.location.href = data.url;
+          try {
+            variables.preOpenedWindow.opener = null;
+          } catch (e) {}
         } else {
-          window.open(data.url, "_blank", "noopener,noreferrer");
+          const opened = window.open(data.url, "_blank");
+          if (opened) {
+            try {
+              opened.opener = null;
+            } catch (e) {}
+          }
         }
+      } else if (variables.preOpenedWindow) {
+        try {
+          variables.preOpenedWindow.close();
+        } catch (e) {}
       }
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables) => {
       setActiveProviderId(null);
+      if (variables?.preOpenedWindow) {
+        try {
+          variables.preOpenedWindow.close();
+        } catch (e) {}
+      }
       toast({
         title: "Handoff failed",
         description: error.message || "Failed to connect to external provider.",
@@ -163,6 +187,15 @@ export function ExternalRideSheet({
       });
     },
   });
+
+  const handleProviderClick = (providerId: "uber" | "ola" | "rapido") => {
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    let preOpenedWindow: Window | null = null;
+    if (!isMobile) {
+      preOpenedWindow = window.open("about:blank", "_blank");
+    }
+    handoffMutation.mutate({ providerId, preOpenedWindow });
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -300,7 +333,7 @@ export function ExternalRideSheet({
                     type="button"
                     className="w-full flex items-center justify-center gap-2"
                     disabled={handoffMutation.isPending}
-                    onClick={() => handoffMutation.mutate(p.id)}
+                    onClick={() => handleProviderClick(p.id)}
                     data-testid={`button-open-${p.id}`}
                   >
                     {isPending ? (
