@@ -1,40 +1,43 @@
-import { Router, type Response } from "express";
+import { Router, type Response, type NextFunction } from "express";
 import { storage } from "../storage";
 import { insertRideRequestSchema } from "@shared/schema";
-import { authenticateToken, type AuthRequest } from "./auth.routes";
+import { authenticateToken, requireVerified, type AuthRequest } from "./auth.routes";
 import { logTelemetryEvent } from "../services/telemetry.service";
+import { ValidationError, NotFoundError, ConflictError } from "../errors";
 
 const router = Router();
 
-// POST /api/ride-requests
-router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
+// POST /api/ride-requests (Request a Ride - Requires institutional email verification)
+router.post("/", authenticateToken, requireVerified, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const requestData = insertRideRequestSchema.parse(req.body);
     const seatsRequested = requestData.seatsRequested || 1;
 
     const ride = await storage.getRide(requestData.rideId);
-    if (!ride) return res.status(404).json({ message: "Ride not found" });
+    if (!ride) return next(new NotFoundError("Ride not found"));
 
     if (ride.driverId === req.user!.id) {
-      return res.status(400).json({ message: "Cannot request your own ride" });
+      return next(new ValidationError("Cannot request your own ride"));
     }
 
     if (ride.status !== "active") {
-      return res.status(400).json({ message: `Cannot request a ride that is ${ride.status}` });
+      return next(new ValidationError(`Cannot request a ride that is ${ride.status}`));
     }
 
     if (ride.availableSeats < seatsRequested) {
-      return res.status(400).json({
-        message: `Not enough seats available. Requested: ${seatsRequested}, Available: ${ride.availableSeats}`,
-      });
+      return next(
+        new ValidationError(
+          `Not enough seats available. Requested: ${seatsRequested}, Available: ${ride.availableSeats}`
+        )
+      );
     }
 
     const existingRequests = await storage.getRideRequestsByRide(requestData.rideId);
     const hasExistingActiveRequest = existingRequests.some(
-      r => r.passengerId === req.user!.id && ["pending", "accepted"].includes(r.status ?? "")
+      (r) => r.passengerId === req.user!.id && ["pending", "accepted"].includes(r.status ?? "")
     );
     if (hasExistingActiveRequest) {
-      return res.status(400).json({ message: "You already have an active or pending request for this ride" });
+      return next(new ConflictError("You already have an active or pending request for this ride"));
     }
 
     const rideRequest = await storage.createRideRequest({
@@ -55,140 +58,156 @@ router.post("/", authenticateToken, async (req: AuthRequest, res: Response) => {
 
     res.status(201).json(rideRequest);
   } catch (error: any) {
-    res.status(400).json({ message: error.message });
+    next(error);
   }
 });
 
 // GET /api/ride-requests/my
-router.get("/my", authenticateToken, async (req: AuthRequest, res: Response) => {
+router.get("/my", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const requests = await storage.getRideRequestsByPassenger(req.user!.id);
-    const enhancedRequests = await Promise.all(
-      requests.map(async request => {
+    const requestsWithRides = await Promise.all(
+      requests.map(async (request) => {
         const ride = await storage.getRide(request.rideId);
-        let driver = null;
-        if (ride) {
-          const driverUser = await storage.getUser(ride.driverId);
-          driver = driverUser ? { ...driverUser, password: undefined } : null;
-        }
-        return { ...request, ride, driver };
+        const driver = ride ? await storage.getUser(ride.driverId) : null;
+        return {
+          ...request,
+          ride: ride ? { ...ride, driver: driver ? { ...driver, password: undefined } : null } : null,
+        };
       })
     );
-    res.json(enhancedRequests);
+    res.json(requestsWithRides);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    next(error);
+  }
+});
+
+// GET /api/ride-requests/driver/incoming
+router.get("/driver/incoming", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const rides = await storage.getRidesByDriver(req.user!.id);
+    const allRequests = await Promise.all(
+      rides.map(async (ride) => {
+        const requests = await storage.getRideRequestsByRide(ride.id);
+        const requestsWithPassengers = await Promise.all(
+          requests.map(async (request) => {
+            const passenger = await storage.getUser(request.passengerId);
+            return {
+              ...request,
+              passenger: passenger ? { ...passenger, password: undefined } : null,
+              ride,
+            };
+          })
+        );
+        return requestsWithPassengers;
+      })
+    );
+    res.json(allRequests.flat());
+  } catch (error: any) {
+    next(error);
   }
 });
 
 // PATCH /api/ride-requests/:id
-router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response) => {
+router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const request = await storage.getRideRequest(req.params.id);
+    if (!request) return next(new NotFoundError("Request not found"));
+
+    const ride = await storage.getRide(request.rideId);
+    if (!ride) return next(new NotFoundError("Associated ride not found"));
+
     const { status } = req.body;
-    if (!["accepted", "rejected", "cancelled"].includes(status)) {
-      return res.status(400).json({ message: "Invalid status. Allowed: accepted, rejected, cancelled" });
+    const allowedStatuses = ["accepted", "rejected", "cancelled"];
+    if (!allowedStatuses.includes(status)) {
+      return next(new ValidationError(`Invalid status. Allowed: ${allowedStatuses.join(", ")}`));
     }
 
-    // Cancellation workflow (by passenger or driver)
-    if (status === "cancelled") {
-      const cancelResult = await storage.cancelRideRequestAtomic(req.params.id, req.user!.id);
-      if (!cancelResult.success) {
-        return res.status(cancelResult.statusCode || 400).json({ message: cancelResult.error });
+    const isDriver = ride.driverId === req.user!.id;
+    const isPassenger = request.passengerId === req.user!.id;
+
+    if (status === "accepted" || status === "rejected") {
+      if (!isDriver) {
+        return res.status(403).json({
+          type: "urn:problem:forbidden",
+          title: "Forbidden",
+          status: 403,
+          detail: "Only the driver can accept or reject requests",
+          message: "Only the driver can accept or reject requests",
+        });
       }
+    }
 
-      logTelemetryEvent("CANCEL_RIDE", req.user!.id, cancelResult.request?.rideId);
+    if (status === "cancelled") {
+      if (!isPassenger && !isDriver) {
+        return res.status(403).json({
+          type: "urn:problem:forbidden",
+          title: "Forbidden",
+          status: 403,
+          detail: "Not authorized to cancel this request",
+          message: "Not authorized to cancel this request",
+        });
+      }
+    }
 
-      // Notify the other party
-      if ((req.app as any).sendToUser && cancelResult.request && cancelResult.ride) {
-        const targetUserId = req.user!.id === cancelResult.request.passengerId
-          ? cancelResult.ride.driverId
-          : cancelResult.request.passengerId;
-
-        (req.app as any).sendToUser(targetUserId, {
-          type: "ride_request_cancelled",
-          request: cancelResult.request,
-          ride: cancelResult.ride,
+    // Atomic seat allocation via storage transaction method
+    if (status === "accepted" && request.status !== "accepted") {
+      const reservation = await storage.acceptRideRequestAtomic(request.id, req.user!.id);
+      if (!reservation.success) {
+        return res.status(400).json({
+          type: "urn:problem:conflict",
+          title: "Reservation Conflict",
+          status: 400,
+          detail: reservation.error || "Cannot accept request: not enough seats available.",
+          message: reservation.error || "Cannot accept request: not enough seats available.",
         });
       }
 
-      return res.json(cancelResult.request);
-    }
-
-    // Rejection workflow (driver only)
-    if (status === "rejected") {
-      const request = await storage.getRideRequest(req.params.id);
-      if (!request) return res.status(404).json({ message: "Request not found" });
-
-      const ride = await storage.getRide(request.rideId);
-      if (!ride || ride.driverId !== req.user!.id) {
-        return res.status(403).json({ message: "Not authorized to update this request" });
-      }
-
-      if (request.status !== "pending") {
-        return res.status(400).json({ message: `Cannot reject a request that is already ${request.status}` });
-      }
-
-      const updatedRequest = await storage.updateRideRequest(req.params.id, { status: "rejected" });
-      logTelemetryEvent("REJECT_REQUEST", req.user!.id, request.rideId);
+      logTelemetryEvent("ACCEPT_REQUEST", req.user!.id, ride.id, { requestId: request.id });
 
       if ((req.app as any).sendToUser) {
         (req.app as any).sendToUser(request.passengerId, {
-          type: "ride_request_status",
-          request: updatedRequest,
-          ride,
+          type: "ride_request_accepted",
+          request: reservation.request,
+          ride: reservation.ride,
         });
       }
-      return res.json(updatedRequest);
+      return res.json(reservation.request);
     }
 
-    // Atomic seat reservation for "accepted" (driver only)
-    const result = await storage.acceptRideRequestAtomic(req.params.id, req.user!.id);
-    if (!result.success) {
-      return res.status(result.statusCode || 400).json({ message: result.error });
+    // Cancellation: restore seats if cancelling an accepted booking
+    if (status === "cancelled" && request.status === "accepted") {
+      const cancellation = await storage.cancelRideRequestAtomic(request.id, req.user!.id);
+      if (!cancellation.success) {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Cancellation Error",
+          status: 400,
+          detail: cancellation.error,
+          message: cancellation.error,
+        });
+      }
+      return res.json(cancellation.request);
     }
 
-    if (result.request) {
-      logTelemetryEvent("ACCEPT_REQUEST", req.user!.id, result.request.rideId);
+    const updatedRequest = await storage.updateRideRequest(request.id, { status });
+
+    if (status === "rejected") {
+      logTelemetryEvent("REJECT_REQUEST", req.user!.id, ride.id, { requestId: request.id });
     }
 
-    if ((req.app as any).sendToUser && result.request && result.ride) {
-      (req.app as any).sendToUser(result.request.passengerId, {
-        type: "ride_request_status",
-        request: result.request,
-        ride: result.ride,
+    if ((req.app as any).sendToUser) {
+      const notifyUserId = isDriver ? request.passengerId : ride.driverId;
+      (req.app as any).sendToUser(notifyUserId, {
+        type: `ride_request_${status}`,
+        request: updatedRequest,
+        ride,
       });
     }
 
-    res.json(result.request);
+    res.json(updatedRequest);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// POST /api/ride-requests/:id/cancel (convenience endpoint)
-router.post("/:id/cancel", authenticateToken, async (req: AuthRequest, res: Response) => {
-  try {
-    const cancelResult = await storage.cancelRideRequestAtomic(req.params.id, req.user!.id);
-    if (!cancelResult.success) {
-      return res.status(cancelResult.statusCode || 400).json({ message: cancelResult.error });
-    }
-
-    logTelemetryEvent("CANCEL_RIDE", req.user!.id, cancelResult.request?.rideId);
-
-    if ((req.app as any).sendToUser && cancelResult.request && cancelResult.ride) {
-      const targetUserId = req.user!.id === cancelResult.request.passengerId
-        ? cancelResult.ride.driverId
-        : cancelResult.request.passengerId;
-
-      (req.app as any).sendToUser(targetUserId, {
-        type: "ride_request_cancelled",
-        request: cancelResult.request,
-        ride: cancelResult.ride,
-      });
-    }
-
-    res.json(cancelResult.request);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 });
 

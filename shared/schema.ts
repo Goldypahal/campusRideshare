@@ -176,17 +176,30 @@ export const insertUserSchema = createInsertSchema(users).omit({
   cancellationCount: true,
   completedRidesCount: true,
   trustScore: true,
+  role: true, // Role cannot be set during registration (Finding 1)
   createdAt: true,
 }).extend({
   email: z.string().email().refine(isValidUniversityEmail, {
     message: "Must be a valid university/institutional email (.edu, .ac.in, or approved campus domain)"
   }),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z.string().min(10, "Password must be at least 10 characters"),
   academicYear: z.enum(["Freshman", "Sophomore", "Junior", "Senior", "Graduate"]),
   gender: z.enum(["Female", "Male", "Non-binary", "Prefer not to say"]),
-  role: z.enum(["student", "responder", "admin"]).default("student").optional(),
   homeAirport: z.string().optional(),
   housingZone: z.string().optional(),
+});
+
+export const updateProfileSchema = z.object({
+  fullName: z.string().min(1, "Full name cannot be empty").max(100).optional(),
+  academicYear: z.enum(["Freshman", "Sophomore", "Junior", "Senior", "Graduate"]).optional(),
+  major: z.string().min(1).max(100).optional(),
+  homeAirport: z.string().max(10).optional(),
+  housingZone: z.string().max(50).optional(),
+});
+
+export const updateUserRoleSchema = z.object({
+  role: z.enum(["student", "driver", "responder", "admin"]),
+  reason: z.string().min(3, "Audit reason is required for role changes").max(500),
 });
 
 export const insertRideSchema = createInsertSchema(rides).omit({
@@ -275,6 +288,8 @@ export type SafetyIncident = typeof safetyIncidents.$inferSelect;
 export type InsertVerificationToken = z.infer<typeof insertVerificationTokenSchema>;
 export type VerificationToken = typeof verificationTokens.$inferSelect;
 export type LoginData = z.infer<typeof loginSchema>;
+export type UpdateProfileData = z.infer<typeof updateProfileSchema>;
+export type UpdateUserRoleData = z.infer<typeof updateUserRoleSchema>;
 
 
 

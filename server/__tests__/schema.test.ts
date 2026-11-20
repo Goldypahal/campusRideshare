@@ -116,4 +116,30 @@ const validToken = insertVerificationTokenSchema.safeParse({
 assert.strictEqual(validToken.success, true, "Valid verification token should pass validation");
 console.log("✅ Test 9 Passed: Verification token schema validated");
 
-console.log("🎉 All 9 schema tests passed successfully!");
+// Test 10: Password minimum length (10 chars)
+const shortPasswordUser = insertUserSchema.safeParse({
+  email: "student@university.edu",
+  password: "short",
+  fullName: "Alex Rivera",
+  academicYear: "Junior",
+  gender: "Non-binary",
+  major: "Computer Science",
+});
+assert.strictEqual(shortPasswordUser.success, false, "Password shorter than 10 characters must fail validation");
+console.log("✅ Test 10 Passed: Minimum 10 character password policy enforced");
+
+// Test 11: Role stripping - insertUserSchema must omit role
+const roleInjectedUser: any = insertUserSchema.safeParse({
+  email: "student@university.edu",
+  password: "securepassword123",
+  fullName: "Alex Rivera",
+  academicYear: "Junior",
+  gender: "Non-binary",
+  major: "Computer Science",
+  role: "admin",
+});
+assert.strictEqual(roleInjectedUser.success, true, "Registration with role property should succeed schema parse");
+assert.strictEqual(roleInjectedUser.data.role, undefined, "insertUserSchema must strip role from registration payload");
+console.log("✅ Test 11 Passed: Role field stripped from public registration schema");
+
+console.log("🎉 All 11 schema tests passed successfully!");

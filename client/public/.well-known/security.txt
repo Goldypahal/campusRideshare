@@ -1,0 +1,6 @@
+Contact: mailto:security@campusrideshare.edu
+Expires: 2027-12-31T23:59:59.000Z
+Preferred-Languages: en, hi
+Canonical: https://campusrideshare.edu/.well-known/security.txt
+Policy: https://campusrideshare.edu/security-policy
+Acknowledgments: https://campusrideshare.edu/hall-of-fame

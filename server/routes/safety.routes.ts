@@ -1,13 +1,14 @@
-import { Router, type Response } from "express";
+import { Router, type Response, type NextFunction } from "express";
 import { storage } from "../storage";
 import { insertSafetyIncidentSchema } from "@shared/schema";
 import { authenticateToken, requireRole, type AuthRequest } from "./auth.routes";
 import { logTelemetryEvent } from "../services/telemetry.service";
+import { NotFoundError, ForbiddenError, ValidationError } from "../errors";
 
 const router = Router();
 
 // POST /api/safety/incidents or /api/sos (Emergency Trigger)
-async function handleCreateIncident(req: AuthRequest, res: Response) {
+async function handleCreateIncident(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { latitude, longitude, message, rideId, severity } = req.body;
 
@@ -81,7 +82,7 @@ async function handleCreateIncident(req: AuthRequest, res: Response) {
       respondersOnline,
     });
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 }
 
@@ -93,21 +94,21 @@ router.get(
   "/incidents/active",
   authenticateToken,
   requireRole(["responder", "admin"]),
-  async (_req: AuthRequest, res: Response) => {
+  async (_req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const activeIncidents = await storage.listActiveIncidents();
       res.json(activeIncidents);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      next(error);
     }
   }
 );
 
 // GET /api/safety/incidents/:id (Restricted to Creator, Involved Co-riders, or Responders)
-router.get("/incidents/:id", authenticateToken, async (req: AuthRequest, res: Response) => {
+router.get("/incidents/:id", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const incident = await storage.getSafetyIncident(req.params.id);
-    if (!incident) return res.status(404).json({ message: "Incident not found" });
+    if (!incident) return next(new NotFoundError("Incident not found"));
 
     const currentUserId = req.user!.id;
     const currentUserRole = req.user!.role || "student";
@@ -132,6 +133,10 @@ router.get("/incidents/:id", authenticateToken, async (req: AuthRequest, res: Re
 
     if (!isCreator && !isStaff && !isRideParticipant) {
       return res.status(403).json({
+        type: "urn:problem:forbidden",
+        title: "Access Denied",
+        status: 403,
+        detail: "Access denied: You are not authorized to view this emergency incident record.",
         message: "Access denied: You are not authorized to view this emergency incident record.",
       });
     }
@@ -144,24 +149,22 @@ router.get("/incidents/:id", authenticateToken, async (req: AuthRequest, res: Re
 
     res.json(incident);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 });
 
-// PATCH /api/safety/incidents/:id/acknowledge (Responders & Admins Only with Legal State Transition)
+// PATCH /api/safety/incidents/:id/acknowledge (Designated responders acknowledge active emergency)
 router.patch(
   "/incidents/:id/acknowledge",
   authenticateToken,
   requireRole(["responder", "admin"]),
-  async (req: AuthRequest, res: Response) => {
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const incident = await storage.getSafetyIncident(req.params.id);
-      if (!incident) return res.status(404).json({ message: "Incident not found" });
+      if (!incident) return next(new NotFoundError("Incident not found"));
 
       if (incident.status !== "active") {
-        return res.status(400).json({
-          message: `Cannot acknowledge incident that is already '${incident.status}'. Only active alerts can be acknowledged.`,
-        });
+        return next(new ValidationError(`Cannot acknowledge incident with status: ${incident.status}`));
       }
 
       const updated = await storage.updateSafetyIncident(req.params.id, {
@@ -171,42 +174,42 @@ router.patch(
         acknowledgedAt: new Date(),
       });
 
-      // Audit acknowledgement
       logTelemetryEvent("SAFETY_INCIDENT_ACKNOWLEDGED", req.user!.id, incident.rideId || undefined, {
         incidentId: req.params.id,
-        acknowledgedBy: req.user!.id,
       });
 
-      // Notify incident creator that responders acknowledged the emergency
-      if ((req.app as any).sendToUser && incident.userId) {
-        (req.app as any).sendToUser(incident.userId, {
-          type: "incident_acknowledged",
-          incidentId: req.params.id,
-          acknowledgedBy: req.user!.id,
-        });
+      const notifyPayload = {
+        type: "incident_acknowledged",
+        incidentId: incident.id,
+        acknowledgedBy: req.user!.id,
+      };
+
+      if ((req.app as any).sendToUser) {
+        (req.app as any).sendToUser(incident.userId, notifyPayload);
+      }
+      if ((req.app as any).sendToIncidentHandlers) {
+        (req.app as any).sendToIncidentHandlers(notifyPayload);
       }
 
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      next(error);
     }
   }
 );
 
-// PATCH /api/safety/incidents/:id/resolve (Responders & Admins Only with Legal State Transition)
+// PATCH /api/safety/incidents/:id/resolve (Responders or Admins close out incident)
 router.patch(
   "/incidents/:id/resolve",
   authenticateToken,
   requireRole(["responder", "admin"]),
-  async (req: AuthRequest, res: Response) => {
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const incident = await storage.getSafetyIncident(req.params.id);
-      if (!incident) return res.status(404).json({ message: "Incident not found" });
+      if (!incident) return next(new NotFoundError("Incident not found"));
 
       if (incident.status === "resolved") {
-        return res.status(400).json({
-          message: "Incident is already marked resolved.",
-        });
+        return next(new ValidationError("Incident is already marked resolved"));
       }
 
       const updated = await storage.updateSafetyIncident(req.params.id, {
@@ -216,23 +219,26 @@ router.patch(
         resolvedAt: new Date(),
       });
 
-      // Audit resolution
       logTelemetryEvent("SAFETY_INCIDENT_RESOLVED", req.user!.id, incident.rideId || undefined, {
         incidentId: req.params.id,
-        resolvedBy: req.user!.id,
       });
 
-      if ((req.app as any).sendToUser && incident.userId) {
-        (req.app as any).sendToUser(incident.userId, {
-          type: "incident_resolved",
-          incidentId: req.params.id,
-          resolvedBy: req.user!.id,
-        });
+      const notifyPayload = {
+        type: "incident_resolved",
+        incidentId: incident.id,
+        resolvedBy: req.user!.id,
+      };
+
+      if ((req.app as any).sendToUser) {
+        (req.app as any).sendToUser(incident.userId, notifyPayload);
+      }
+      if ((req.app as any).sendToIncidentHandlers) {
+        (req.app as any).sendToIncidentHandlers(notifyPayload);
       }
 
       res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      next(error);
     }
   }
 );

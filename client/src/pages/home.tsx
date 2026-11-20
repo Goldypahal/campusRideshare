@@ -34,14 +34,18 @@ export default function Home() {
     },
   });
 
-  const { data: activeRides = [], isLoading: isRidesLoading } = useQuery({
+  const { data: activeRidesData, isLoading: isRidesLoading } = useQuery({
     queryKey: ['/api/rides'],
     queryFn: async () => {
       const response = await fetch('/api/rides?limit=3');
-      if (!response.ok) return [];
+      if (!response.ok) return { rides: [] };
       return response.json();
     },
   });
+
+  const activeRides = Array.isArray(activeRidesData)
+    ? activeRidesData
+    : (activeRidesData?.rides || []);
 
   return (
     <div className="parchment-canvas min-h-[calc(100vh-4rem)] pb-16">

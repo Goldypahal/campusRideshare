@@ -1,7 +1,8 @@
 import { Router, type Response, type NextFunction } from "express";
 import { storage } from "../storage";
 import { insertMessageSchema } from "@shared/schema";
-import { authenticateToken, type AuthRequest } from "./auth.routes";
+import { authenticateToken, requireVerified, type AuthRequest } from "./auth.routes";
+import { ValidationError, ForbiddenError } from "../errors";
 
 const router = Router();
 
@@ -22,71 +23,89 @@ function messageRateLimiter(req: AuthRequest, res: Response, next: NextFunction)
   }
 
   if (record.count >= maxMsgs) {
-    return res.status(429).json({ message: "Message rate limit exceeded. Please wait a moment before sending more messages." });
+    return res.status(429).json({
+      type: "urn:problem:rate-limited",
+      title: "Rate Limit Exceeded",
+      status: 429,
+      detail: "Message rate limit exceeded. Please wait a moment before sending more messages.",
+      message: "Message rate limit exceeded. Please wait a moment before sending more messages.",
+    });
   }
 
   record.count += 1;
   next();
 }
 
-// POST /api/messages
-router.post("/", authenticateToken, messageRateLimiter, async (req: AuthRequest, res: Response) => {
-  try {
-    const messageData = insertMessageSchema.parse(req.body);
-    const fromUserId = req.user!.id;
-    const toUserId = messageData.toUserId;
+// POST /api/messages (Requires institutional email verification)
+router.post(
+  "/",
+  authenticateToken,
+  requireVerified,
+  messageRateLimiter,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const messageData = insertMessageSchema.parse(req.body);
+      const fromUserId = req.user!.id;
+      const toUserId = messageData.toUserId;
 
-    if (fromUserId === toUserId) {
-      return res.status(400).json({ message: "Cannot send a message to yourself" });
-    }
+      if (fromUserId === toUserId) {
+        return next(new ValidationError("Cannot send a message to yourself"));
+      }
 
-    // Server-enforced conversation authorization
-    const canChat = await storage.canUsersCommunicate(fromUserId, toUserId, messageData.rideId ?? undefined);
-    if (!canChat) {
-      return res.status(403).json({
-        message: "Not authorized to message this user. Messaging is only permitted between confirmed participants or pending requesters of a common ride.",
+      // Server-enforced conversation authorization
+      const canChat = await storage.canUsersCommunicate(fromUserId, toUserId, messageData.rideId ?? undefined);
+      if (!canChat) {
+        return res.status(403).json({
+          type: "urn:problem:forbidden",
+          title: "Forbidden",
+          status: 403,
+          detail: "Not authorized to message this user. Messaging is only permitted between confirmed participants or pending requesters of a common ride.",
+          message: "Not authorized to message this user. Messaging is only permitted between confirmed participants or pending requesters of a common ride.",
+        });
+      }
+
+      const message = await storage.createMessage({
+        ...messageData,
+        fromUserId,
       });
+
+      if ((req.app as any).sendToUser) {
+        (req.app as any).sendToUser(toUserId, {
+          type: "new_message",
+          message,
+        });
+      }
+
+      res.status(201).json(message);
+    } catch (error: any) {
+      next(error);
     }
-
-    const message = await storage.createMessage({
-      ...messageData,
-      fromUserId,
-      content: messageData.content.trim(),
-    });
-
-    // Targeted WebSocket delivery
-    if ((req.app as any).sendToUser) {
-      (req.app as any).sendToUser(toUserId, { type: "new_message", message });
-    }
-
-    res.status(201).json(message);
-  } catch (error: any) {
-    res.status(400).json({ message: error.message });
   }
-});
+);
 
-// GET /api/messages/:userId
-router.get("/:userId", authenticateToken, async (req: AuthRequest, res: Response) => {
+// GET /api/messages/:otherUserId
+router.get("/:otherUserId", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const fromUserId = req.user!.id;
-    const targetUserId = req.params.userId;
+    const toUserId = req.params.otherUserId;
     const rideId = req.query.rideId as string | undefined;
 
-    // Server-enforced conversation authorization for history access
-    const canView = await storage.canUsersCommunicate(fromUserId, targetUserId, rideId);
-    if (!canView) {
+    // Verify chat participants authorization
+    const canChat = await storage.canUsersCommunicate(fromUserId, toUserId, rideId);
+    if (!canChat) {
       return res.status(403).json({
-        message: "Not authorized to view messages with this user without a mutual ride or booking.",
+        type: "urn:problem:forbidden",
+        title: "Forbidden",
+        status: 403,
+        detail: "Not authorized to access chat history for this user.",
+        message: "Not authorized to access chat history for this user.",
       });
     }
 
-    const limit = Math.min(parseInt(req.query.limit as string || "100", 10), 100);
-    const offset = Math.max(parseInt(req.query.offset as string || "0", 10), 0);
-
-    const messages = await storage.getMessagesBetweenUsers(fromUserId, targetUserId, offset, limit);
+    const messages = await storage.getMessagesBetweenUsers(fromUserId, toUserId);
     res.json(messages);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 });
 

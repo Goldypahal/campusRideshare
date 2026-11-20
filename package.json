@@ -1,17 +1,23 @@
 {
-  "name": "rest-express",
+  "name": "campus-rideshare",
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-    "build": "tsc",
-    "start": "cross-env NODE_ENV=production tsx server/index.ts",
+    "build": "npm run build:web && npm run build:api",
+    "build:web": "node --require ./scripts/patch-fs.cjs ./node_modules/vite/bin/vite.js build",
+    "build:api": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "start": "cross-env NODE_ENV=production node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "test": "tsx server/__tests__/schema.test.ts && tsx server/__tests__/concurrency_and_matching.test.ts && tsx server/__tests__/authorization_and_safety.test.ts && tsx server/__tests__/http_api_integration.test.ts",
     "test:schema": "tsx server/__tests__/schema.test.ts",
     "test:concurrency": "tsx server/__tests__/concurrency_and_matching.test.ts",
     "test:safety": "tsx server/__tests__/authorization_and_safety.test.ts",
-    "test:integration": "tsx server/__tests__/http_api_integration.test.ts"
+    "test:integration": "tsx server/__tests__/http_api_integration.test.ts",
+    "test:ml": "python -m pytest -o pythonpath=. ml_service/tests/test_ml_pipeline.py -p no:cacheprovider",
+    "test:all": "npm run test && npm run test:ml"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

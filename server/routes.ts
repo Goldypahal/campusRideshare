@@ -3,12 +3,16 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import jwt from "jsonwebtoken";
 import { env } from "./env";
-import authRouter from "./routes/auth.routes";
+import { storage } from "./storage";
+import authRouter, { validateWsTicket } from "./routes/auth.routes";
+import adminRouter from "./routes/admin.routes";
+import userRouter from "./routes/user.routes";
 import rideRouter from "./routes/ride.routes";
 import requestRouter from "./routes/request.routes";
 import messageRouter from "./routes/message.routes";
 import ratingRouter from "./routes/rating.routes";
 import safetyRouter from "./routes/safety.routes";
+import { errorHandler } from "./errors";
 
 const JWT_SECRET = env.JWT_SECRET;
 
@@ -26,6 +30,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Mount Domain Routers
   app.use("/api/auth", authRouter);
+  app.use("/api/admin", adminRouter);
+  app.use("/admin", adminRouter);
+  app.use("/api/users", userRouter);
   app.use("/api/rides", rideRouter);
   app.use("/api/ride-requests", requestRouter);
   app.use("/api/messages", messageRouter);
@@ -33,6 +40,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api", ratingRouter); // Backward compatibility
   app.use("/api/safety", safetyRouter);
   app.use("/api", safetyRouter); // Backward compatibility for /api/sos
+
+  // Central RFC 7807 Problem+JSON Error Handler (Finding 14)
+  app.use(errorHandler);
 
   // -------------------- HARDENED AUTHENTICATED WEBSOCKET SERVER --------------------
   const httpServer = createServer(app);
@@ -91,15 +101,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.warn("WS client socket error:", err.message);
     });
 
-    // 1. Connection-time token extraction & authentication
+    // 1. Connection-time token extraction & authentication (Tickets or JWT)
     let authenticatedUserId: string | null = null;
     let authTimeout: NodeJS.Timeout | null = null;
 
     try {
       const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
+      const ticket = url.searchParams.get("ticket");
       const token = url.searchParams.get("token");
 
-      if (token) {
+      if (ticket) {
+        const ticketUserId = validateWsTicket(ticket);
+        if (ticketUserId) {
+          authenticatedUserId = ticketUserId;
+          bindUserSocket(socket, authenticatedUserId);
+        }
+      } else if (token) {
         const decoded = jwt.verify(token, JWT_SECRET) as { id: string };
         authenticatedUserId = decoded.id;
         bindUserSocket(socket, authenticatedUserId);
@@ -108,7 +125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.warn("WS: Connection token invalid:", err.message);
     }
 
-    // If no token in URL, give a 3-second grace window for immediate { type: "auth", token } message
+    // If no valid auth in URL, give a 3-second grace window for immediate { type: "auth", token/ticket } message
     if (!authenticatedUserId) {
       authTimeout = setTimeout(() => {
         if (!socket.userId) {
@@ -118,7 +135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, 3000);
     }
 
-    socket.on("message", (msg) => {
+    socket.on("message", async (msg) => {
       // Socket rate limiting: max 30 messages per 10 seconds
       const now = Date.now();
       if (now - (socket.lastMsgReset || 0) > 10000) {
@@ -135,18 +152,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const data = JSON.parse(msg.toString());
 
-        // Handle inline auth token if not provided in URL
-        if (data.type === "auth" && data.token) {
-          try {
-            const decoded = jwt.verify(data.token, JWT_SECRET) as { id: string };
-            authenticatedUserId = decoded.id;
-            bindUserSocket(socket, authenticatedUserId);
-            if (authTimeout) clearTimeout(authTimeout);
-            socket.send(JSON.stringify({ type: "auth_success", userId: authenticatedUserId }));
-          } catch {
-            socket.close(4401, "Invalid auth token");
+        // Handle inline auth ticket or token if not provided in URL
+        if (data.type === "auth") {
+          if (data.ticket) {
+            const ticketUserId = validateWsTicket(data.ticket);
+            if (ticketUserId) {
+              authenticatedUserId = ticketUserId;
+              bindUserSocket(socket, authenticatedUserId);
+              if (authTimeout) clearTimeout(authTimeout);
+              socket.send(JSON.stringify({ type: "auth_success", userId: authenticatedUserId }));
+              return;
+            }
           }
-          return;
+          if (data.token) {
+            try {
+              const decoded = jwt.verify(data.token, JWT_SECRET) as { id: string };
+              authenticatedUserId = decoded.id;
+              bindUserSocket(socket, authenticatedUserId);
+              if (authTimeout) clearTimeout(authTimeout);
+              socket.send(JSON.stringify({ type: "auth_success", userId: authenticatedUserId }));
+            } catch {
+              socket.close(4401, "Invalid auth token");
+            }
+            return;
+          }
         }
 
         // Must be authenticated for any subsequent operations
@@ -160,9 +189,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return;
         }
 
-        // Ride room subscription
+        // Ride room subscription - Gated by participation check (Finding 4)
         if (data.type === "subscribe_ride" && data.rideId) {
           const rideId = String(data.rideId);
+          const ride = await storage.getRide(rideId);
+          if (!ride) {
+            socket.send(JSON.stringify({ type: "error", message: "Ride not found" }));
+            return;
+          }
+
+          const isDriver = ride.driverId === socket.userId;
+          let isAcceptedPassenger = false;
+          if (!isDriver) {
+            const requests = await storage.getRideRequestsByRide(rideId);
+            isAcceptedPassenger = requests.some(
+              (r) => r.passengerId === socket.userId && r.status === "accepted"
+            );
+          }
+
+          if (!isDriver && !isAcceptedPassenger) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                message: "Forbidden: Only confirmed participants (driver or accepted passenger) may subscribe to this ride room",
+                code: "FORBIDDEN_RIDE_SUBSCRIPTION",
+              })
+            );
+            return;
+          }
+
           if (!rideSockets.has(rideId)) {
             rideSockets.set(rideId, new Set());
           }
@@ -180,8 +235,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return;
         }
 
-        // Safety handler channel subscription
+        // Safety handler channel subscription - Strictly gated on responder/admin role (Finding 3)
         if (data.type === "subscribe_incident_stream") {
+          const user = await storage.getUser(socket.userId!);
+          const role = user?.role || "student";
+          if (!["responder", "admin"].includes(role)) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                message: "Forbidden: Responder or admin role required to subscribe to incident stream",
+                code: "FORBIDDEN_INCIDENT_STREAM",
+              })
+            );
+            return;
+          }
+
           incidentSockets.add(socket);
           socket.send(JSON.stringify({ type: "subscribed_incident_stream" }));
           return;
@@ -203,7 +271,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       userSockets.set(userId, new Set());
     }
     userSockets.get(userId)!.add(socket);
-    console.log(`WS: User ${userId} successfully bound and authenticated`);
   }
 
   function cleanupSocket(socket: AuthenticatedSocket) {
@@ -254,7 +321,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  // Targeted event dispatcher: Send to emergency/safety incident responders
+  // Targeted event dispatcher: Send to verified emergency/safety incident responders
   function sendToIncidentHandlers(event: any) {
     try {
       const raw = JSON.stringify(event);
@@ -266,7 +333,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  // Public system broadcast (only for system-level notifications, never for private rides or SOS alerts)
+  // Public system broadcast (only for system notifications)
   function broadcastPublicEvent(event: any) {
     try {
       const raw = JSON.stringify(event);
@@ -286,7 +353,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   (app as any).sendToIncidentHandlers = sendToIncidentHandlers;
   (app as any).getConnectedRespondersCount = () => incidentSockets.size;
   (app as any).broadcastPublicEvent = broadcastPublicEvent;
-  // Keep broadcastWS backward-compatible for existing calls but make it safe (authenticated only)
   (app as any).broadcastWS = broadcastPublicEvent;
 
   return httpServer;

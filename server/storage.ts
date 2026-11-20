@@ -148,7 +148,7 @@ export class DatabaseStorage implements IStorage {
     if (!db) throw new Error("Database not connected");
     const [user] = await db.insert(users).values({
       ...insertUser,
-      role: insertUser.role ?? "student",
+      role: (insertUser as any).role ?? "student",
       homeAirport: insertUser.homeAirport ?? null,
       housingZone: insertUser.housingZone ?? null,
     }).returning();
@@ -709,7 +709,7 @@ export class MemStorage implements IStorage {
     const user: User = {
       ...insertUser,
       id,
-      role: insertUser.role ?? "student",
+      role: (insertUser as any).role ?? "student",
       isVerified: false,
       rating: 0,
       totalRides: 0,

@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>UniRide - Find Your Campus Ride</title>
+<!-- Google Fonts: Playfair Display & Work Sans -->
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&amp;family=Work+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "inverse-primary": "#ebc246",
+                    "inverse-on-surface": "#f4f1e6",
+                    "tertiary-container": "#68e590",
+                    "on-tertiary-fixed": "#00210c",
+                    "on-secondary-container": "#795950",
+                    "primary-fixed": "#ffe08b",
+                    "secondary-fixed-dim": "#e7bdb1",
+                    "primary-container": "#f2c94c",
+                    "surface-container-lowest": "#ffffff",
+                    "surface-variant": "#e5e3d8",
+                    "primary": "#745b00",
+                    "secondary": "#77574d",
+                    "surface-container-high": "#ebe8dd",
+                    "on-error": "#ffffff",
+                    "tertiary-fixed": "#7efba4",
+                    "error": "#ba1a1a",
+                    "on-surface": "#1c1c16",
+                    "surface-dim": "#dddad0",
+                    "on-tertiary-fixed-variant": "#005228",
+                    "on-tertiary": "#ffffff",
+                    "on-primary": "#ffffff",
+                    "surface-container-highest": "#e5e3d8",
+                    "tertiary-fixed-dim": "#61de8a",
+                    "on-secondary-fixed": "#2c160e",
+                    "tertiary": "#006d37",
+                    "on-surface-variant": "#4d4635",
+                    "surface": "#fcf9ee",
+                    "secondary-container": "#fed3c7",
+                    "outline": "#7f7663",
+                    "on-primary-container": "#6b5400",
+                    "inverse-surface": "#31312a",
+                    "on-secondary-fixed-variant": "#5d4037",
+                    "surface-container-low": "#f7f4e9",
+                    "on-secondary": "#ffffff",
+                    "secondary-fixed": "#ffdbd0",
+                    "surface-container": "#f1eee3",
+                    "primary-fixed-dim": "#ebc246",
+                    "surface-bright": "#fcf9ee",
+                    "on-background": "#1c1c16",
+                    "background": "#fcf9ee",
+                    "outline-variant": "#d0c5af",
+                    "on-primary-fixed-variant": "#584400",
+                    "surface-tint": "#745b00",
+                    "on-tertiary-container": "#006532",
+                    "on-error-container": "#93000a",
+                    "on-primary-fixed": "#241a00",
+                    "error-container": "#ffdad6"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "element-gap": "12px",
+                    "base": "8px",
+                    "section-gap": "40px",
+                    "gutter-md": "16px",
+                    "container-margin-desktop": "64px",
+                    "container-margin-mobile": "20px"
+            },
+            "fontFamily": {
+                    "label-sm": ["Work Sans"],
+                    "headline-md": ["Playfair Display"],
+                    "label-md": ["Work Sans"],
+                    "headline-lg-mobile": ["Playfair Display"],
+                    "body-lg": ["Work Sans"],
+                    "display-lg": ["Playfair Display"],
+                    "body-md": ["Work Sans"],
+                    "headline-lg": ["Playfair Display"]
+            },
+            "fontSize": {
+                    "label-sm": ["12px", {"lineHeight": "1.2", "fontWeight": "500"}],
+                    "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                    "label-md": ["14px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "headline-lg-mobile": ["28px", {"lineHeight": "1.3", "fontWeight": "700"}],
+                    "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "display-lg": ["48px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-md": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "700"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        body {
+            background-color: #fcf9ee;
+            color: #1c1c16;
+            -webkit-font-smoothing: antialiased;
+        }
+        .ride-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .ride-card:active {
+            transform: scale(0.98);
+        }
+        .custom-scroll-hide::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="pb-24">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-inverse-surface border-b border-outline-variant dark:border-outline sticky top-0 z-50 flex justify-between items-center w-full px-container-margin-mobile md:px-container-margin-desktop py-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary dark:text-inverse-primary" style="font-size: 28px;">school</span>
+<h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-inverse-primary">UniRide</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="hover:bg-surface-container-high dark:hover:bg-surface-variant p-2 rounded-full transition-colors active:scale-95">
+<span class="material-symbols-outlined text-on-surface-variant dark:text-surface-variant">emergency</span>
+</button>
+</div>
+</header>
+<main class="max-w-[1200px] mx-auto px-container-margin-mobile md:px-container-margin-desktop mt-6">
+<!-- Search Section -->
+<section class="mb-section-gap">
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant mb-6">
+<h2 class="font-headline-md text-headline-md mb-6">Find Your Ride</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Starting Point -->
+<div class="flex flex-col gap-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant">From</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-secondary-fixed-variant">location_on</span>
+<input class="w-full bg-white border border-outline-variant rounded-lg py-3 pl-10 pr-4 font-body-md text-body-md focus:ring-2 focus:ring-primary focus:border-transparent outline-none" placeholder="Starting location" type="text"/>
+</div>
+</div>
+<!-- Destination -->
+<div class="flex flex-col gap-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant">To</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-secondary-fixed-variant">flag</span>
+<input class="w-full bg-white border border-outline-variant rounded-lg py-3 pl-10 pr-4 font-body-md text-body-md focus:ring-2 focus:ring-primary focus:border-transparent outline-none" placeholder="Destination" type="text"/>
+</div>
+</div>
+</div>
+<!-- Assistant Toggle -->
+<div class="mt-6 flex items-center justify-between p-4 bg-primary-container/10 border border-primary/20 rounded-lg">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+<div>
+<p class="font-label-md text-label-md text-on-primary-container">Smart Airport &amp; Break Assistant</p>
+<p class="text-[12px] text-on-surface-variant">Find specific routes for Thanksgiving &amp; Winter Break</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<!-- Filter Chips Horizontal Scroll -->
+<div class="flex gap-2 overflow-x-auto pb-4 custom-scroll-hide">
+<button class="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-full font-label-md text-label-md whitespace-nowrap shadow-sm">
+<span class="material-symbols-outlined text-[18px]">verified</span>
+                    Verified Only
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 bg-surface-container-high text-on-surface border border-outline-variant rounded-full font-label-md text-label-md whitespace-nowrap hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[18px]">female</span>
+                    Female Drivers
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 bg-surface-container-high text-on-surface border border-outline-variant rounded-full font-label-md text-label-md whitespace-nowrap hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[18px]">schedule</span>
+                    Earliest Departure
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 bg-surface-container-high text-on-surface border border-outline-variant rounded-full font-label-md text-label-md whitespace-nowrap hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[18px]">payments</span>
+                    Lowest Price
+                </button>
+</div>
+</section>
+<!-- Available Rides List -->
+<section class="pb-12">
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-headline-md text-headline-md">Available Rides</h3>
+<span class="text-label-sm font-label-sm text-on-surface-variant bg-surface-container rounded-md px-2 py-1">12 results</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Ride Card 1 -->
+<div class="ride-card bg-white border border-outline-variant rounded-xl p-4 flex flex-col gap-4 relative overflow-hidden group">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-3">
+<img class="w-12 h-12 rounded-full border-2 border-primary-container object-cover" data-alt="A professional student profile picture showing a friendly young man in a university campus setting, soft natural lighting, light-mode collegiate aesthetic, warm tones, high quality photography." src="https://lh3.googleusercontent.com/aida-public/AB6AXuADICMzyAF7iUgixQ4Wo76XMdgFxBA-9IMTINbxoCKdIxamicjgc244xSaFH_wPgmxs9TBZigzZXi0KK1tv27zch5ZXP6eHkwXv3qK_AVrtDiKPUNJGIA4BtZVK59C22mS2Ke5uZx1QSKQZpBWD5JWQuHwqXl6DcOtt_LvyBSsAO4ND3dx77OZJ1DZdBm5F8M3uigKPIiFZ8JsoEfwlaLcTrhP9b_wSCiktmr4A_PMPZdjDGC9N59Ha"/>
+<div>
+<div class="flex items-center gap-1">
+<p class="font-label-md text-label-md">Alex Rivera</p>
+<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<div class="flex items-center gap-1 text-on-surface-variant">
+<span class="material-symbols-outlined text-[14px]">star</span>
+<span class="text-label-sm font-label-sm">4.9 · Sr. Engineering</span>
+</div>
+</div>
+</div>
+<div class="text-right">
+<p class="font-headline-md text-primary">$18.00</p>
+<p class="text-label-sm font-label-sm text-on-surface-variant">2 seats left</p>
+</div>
+</div>
+<div class="flex flex-col gap-2 pl-2 border-l-2 border-dotted border-outline-variant">
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-outline"></span>
+<p class="font-body-md text-body-md font-medium">Main Campus South Gate</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">09:30 AM</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<p class="font-body-md text-body-md font-medium">City International Airport (SFO)</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">ETA 10:45 AM</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-surface-variant">
+<div class="flex gap-4">
+<span class="flex items-center gap-1 text-label-sm text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">directions_car</span>
+                                Toyota Prius
+                            </span>
+</div>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-lg font-label-md text-label-md active:scale-95 transition-transform">
+                            Request Ride
+                        </button>
+</div>
+</div>
+<!-- Ride Card 2 -->
+<div class="ride-card bg-white border border-outline-variant rounded-xl p-4 flex flex-col gap-4 relative overflow-hidden group">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-3">
+<img class="w-12 h-12 rounded-full border-2 border-primary-container object-cover" data-alt="A portrait of a smiling female graduate student wearing a university sweatshirt, soft golden hour lighting on a collegiate campus, premium light-mode UI style, cream and gold color palette." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCrG_RM-8AFk8puLAsrXu2UNMF7xwmdW0t4YYdoGzjzaSKIrtbR6gZwJGCUnWgZdYBiiBtZJJZVVJ2MeDz_JgIvCbHYtpiI8y8XU62n50KuKwR745tTSnEo7cnsz9E3BWC_VLKeQEgMo5DKaIU5sjC-lcXh9xYcVRR7f_gujRoPb4APWqWAhDyQ7e6kBf0wSh0LoKaXmHD5tkGgsCT2kNA8RjYxj4LlzMKkS-hYL8m9hK4hufXs2d0H"/>
+<div>
+<div class="flex items-center gap-1">
+<p class="font-label-md text-label-md">Maya Chen</p>
+<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<div class="flex items-center gap-1 text-on-surface-variant">
+<span class="material-symbols-outlined text-[14px]">star</span>
+<span class="text-label-sm font-label-sm">5.0 · Graduate Student</span>
+</div>
+</div>
+</div>
+<div class="text-right">
+<p class="font-headline-md text-primary">$15.50</p>
+<p class="text-label-sm font-label-sm text-on-surface-variant">3 seats left</p>
+</div>
+</div>
+<div class="flex flex-col gap-2 pl-2 border-l-2 border-dotted border-outline-variant">
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-outline"></span>
+<p class="font-body-md text-body-md font-medium">Science Hill Library</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">11:15 AM</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<p class="font-body-md text-body-md font-medium">Downtown Transit Hub</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">ETA 11:50 AM</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-surface-variant">
+<div class="flex gap-2">
+<span class="bg-secondary-container text-on-secondary-container px-2 py-1 rounded text-[10px] font-bold">FEMALE ONLY</span>
+</div>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-lg font-label-md text-label-md active:scale-95 transition-transform">
+                            Request Ride
+                        </button>
+</div>
+</div>
+<!-- Ride Card 3 (Bento-style variation for promotional) -->
+<div class="bg-surface-container border border-outline-variant rounded-xl p-4 col-span-1 md:col-span-2 flex flex-col md:flex-row items-center gap-6 overflow-hidden relative">
+<div class="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16"></div>
+<div class="flex-1">
+<h4 class="font-headline-md text-headline-md mb-2">Campus Shuttle Partner</h4>
+<p class="font-body-md text-body-md text-on-surface-variant mb-4">Heading home for the weekend? Check our official partner buses for fixed routes with extra luggage space.</p>
+<button class="bg-white border border-outline px-6 py-2 rounded-full font-label-md text-label-md hover:bg-surface transition-colors shadow-sm">
+                            View Official Routes
+                        </button>
+</div>
+<div class="w-full md:w-48 h-32 rounded-lg overflow-hidden flex-shrink-0">
+<img class="w-full h-full object-cover" data-alt="A modern university shuttle bus with collegiate branding driving through a scenic campus lined with autumn trees, clean high-key lighting, scholarly corporate aesthetic, warm cream background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD3yByKGYF5PBHr6Yj1a6npKOLhWcZq4IdykpXITZTiSVY_scr9yLxh0ACilWjM7Q7xgMQOWOYInKrtMcbb2J06GUlWGGXYo5Y10_bAT25ewP5-BOaFkozUOdxd2wNUkngT5FTOuzQK1G3ddHU5F7p62AmFB6ys0vjepdFiiSWk8aHrwvwi5cPrKqtEYNQrr96j5VG2GzT3O1XEX1GKqSuI8t8HoMmvHm7eofsVlHJUTJ-U59Wsr5HI"/>
+</div>
+</div>
+<!-- Ride Card 4 -->
+<div class="ride-card bg-white border border-outline-variant rounded-xl p-4 flex flex-col gap-4 relative overflow-hidden group">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-3">
+<img class="w-12 h-12 rounded-full border-2 border-primary-container object-cover" data-alt="A portrait of a male student with glasses in a library background, professional headshot style, clean minimalist lighting, scholarly modern aesthetic, soft focus background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDB2DXpDjuXQZBC-YvdEEm_nY34xRjMnIve7Gz8e78gSInW0Nk6_kIZHP-E5qSWHN1z-0N5nsnnMAhNHwYs_iEXgypMZkdOCQzs6Nz4mr1tU6WS83OwH2GeG0T3wd-9tkA8HlbZ2RZy_9f1OfG7c2qhIa5P06toR3QuEOuVmsmSvGmtJixuJYGMSzNuGUd0si330JKayUZnbUTRmBgtYnmuT6TakwfVb11gIZXjTKECGHaZuEuYVZUz"/>
+<div>
+<div class="flex items-center gap-1">
+<p class="font-label-md text-label-md">Jameson Lee</p>
+<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<div class="flex items-center gap-1 text-on-surface-variant">
+<span class="material-symbols-outlined text-[14px]">star</span>
+<span class="text-label-sm font-label-sm">4.7 · Sophomore</span>
+</div>
+</div>
+</div>
+<div class="text-right">
+<p class="font-headline-md text-primary">$12.00</p>
+<p class="text-label-sm font-label-sm text-on-surface-variant">1 seat left</p>
+</div>
+</div>
+<div class="flex flex-col gap-2 pl-2 border-l-2 border-dotted border-outline-variant">
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-outline"></span>
+<p class="font-body-md text-body-md font-medium">Student Union Lot B</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">02:00 PM</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<p class="font-body-md text-body-md font-medium">Union Station</p>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-auto">ETA 02:40 PM</span>
+</div>
+</div>
+<div class="flex items-center justify-between pt-4 border-t border-surface-variant">
+<div class="flex gap-4">
+<span class="flex items-center gap-1 text-label-sm text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">directions_car</span>
+                                Honda Civic
+                            </span>
+</div>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-lg font-label-md text-label-md active:scale-95 transition-transform">
+                            Request Ride
+                        </button>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- FAB for adding a ride -->
+<button class="fixed right-6 bottom-24 bg-primary text-on-primary w-14 h-14 rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-90 transition-all z-40 md:hidden">
+<span class="material-symbols-outlined" style="font-size: 32px;">add</span>
+</button>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center py-3 px-4 bg-surface dark:bg-inverse-surface border-t border-outline-variant dark:border-outline shadow-lg rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-all" href="#">
+<span class="material-symbols-outlined">home</span>
+<span class="font-label-sm text-label-sm">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-primary dark:text-inverse-primary bg-primary-container dark:bg-on-primary-fixed-variant rounded-full px-4 py-1 scale-110 duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">search</span>
+<span class="font-label-sm text-label-sm">Search</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-all" href="#">
+<span class="material-symbols-outlined">add_circle</span>
+<span class="font-label-sm text-label-sm">Offer</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-all" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-sm text-label-sm">Profile</span>
+</a>
+</nav>
+<script>
+        // Micro-interaction for filter buttons
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                if (this.classList.contains('px-4') && !this.classList.contains('bg-primary')) {
+                    // Logic for chip selection visual toggle
+                    document.querySelectorAll('.bg-primary').forEach(el => {
+                        if (el.innerText.includes('Verified') || el.innerText.includes('Female')) {
+                            // Leave primary buttons alone
+                        }
+                    });
+                }
+            });
+        });
+    </script>
+</body></html>
