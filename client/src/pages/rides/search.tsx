@@ -187,8 +187,8 @@ export default function SearchRides() {
     } catch (e) {}
   }
 
-  const shouldSuggestExternal = hasExternalProviders && (isLowMatch || isDepartureSoon);
-  const bannerReason = isDepartureSoon ? "too_soon" : "low_match";
+  const shouldSuggestExternal = hasExternalProviders && (noRidesFound || isLowMatch || isDepartureSoon);
+  const bannerReason = noRidesFound ? "no_match" : isDepartureSoon ? "too_soon" : "low_match";
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -245,10 +245,16 @@ export default function SearchRides() {
           >
             <div>
               <div className="font-semibold text-sm">
-                {isDepartureSoon ? "Leaving soon? Cab & auto options available" : "Low campus match? External rides available"}
+                {noRidesFound
+                  ? "No campus ride fits? Book with another app"
+                  : isDepartureSoon
+                  ? "Leaving soon? Cab & auto options available"
+                  : "Low campus match? External rides available"}
               </div>
               <div className="text-xs text-muted-foreground">
-                {isDepartureSoon
+                {noRidesFound
+                  ? "No campus carpools match your criteria. Continue your journey with an external provider."
+                  : isDepartureSoon
                   ? `Your scheduled departure is within ${soonMinutesThreshold} minutes. Check cabs if no driver confirms in time.`
                   : `Top campus match is ${bestMatchScore}%, below the ${matchThreshold}% threshold. Book with an external provider.`}
               </div>
