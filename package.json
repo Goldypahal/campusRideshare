@@ -11,11 +11,12 @@
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "test": "tsx server/__tests__/schema.test.ts && tsx server/__tests__/concurrency_and_matching.test.ts && tsx server/__tests__/authorization_and_safety.test.ts && tsx server/__tests__/http_api_integration.test.ts",
+    "test": "tsx server/__tests__/schema.test.ts && tsx server/__tests__/concurrency_and_matching.test.ts && tsx server/__tests__/authorization_and_safety.test.ts && tsx server/__tests__/http_api_integration.test.ts && tsx server/__tests__/external_rides.test.ts",
     "test:schema": "tsx server/__tests__/schema.test.ts",
     "test:concurrency": "tsx server/__tests__/concurrency_and_matching.test.ts",
     "test:safety": "tsx server/__tests__/authorization_and_safety.test.ts",
     "test:integration": "tsx server/__tests__/http_api_integration.test.ts",
+    "test:external": "tsx server/__tests__/external_rides.test.ts",
     "test:ml": "python -m pytest -o pythonpath=. ml_service/tests/test_ml_pipeline.py -p no:cacheprovider",
     "test:all": "npm run test && npm run test:ml"
   },

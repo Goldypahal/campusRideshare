@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isAuthenticated } from "@/lib/auth";
-import { ExternalLink, Copy, Check, ShieldAlert, Info, MapPin, ArrowRight, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { ExternalLink, Copy, Check, ShieldAlert, Info, MapPin, ArrowRight, Loader2, Calculator } from "lucide-react";
 
 export interface ExternalRideProviderInfo {
   id: "uber" | "ola" | "rapido";
@@ -52,6 +53,11 @@ export function ExternalRideSheet({
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
+  const [calculatorFare, setCalculatorFare] = useState<string>("");
+  const [calculatorRiders, setCalculatorRiders] = useState<number>(2);
+
+  const fareNum = Math.max(0, parseFloat(calculatorFare) || 0);
+  const perPersonAmount = calculatorRiders > 0 && fareNum > 0 ? Math.ceil(fareNum / calculatorRiders) : 0;
 
   // Fetch enabled external providers
   const { data: providersData, isLoading: isProvidersLoading } = useQuery<{
@@ -303,6 +309,59 @@ export function ExternalRideSheet({
                 </div>
               );
             })
+          )}
+        </div>
+
+        {/* Optional Fare-Split Calculator (Local Only) */}
+        <div className="border rounded-lg p-4 bg-muted/30 space-y-3" data-testid="card-fare-split-calculator">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <Calculator className="w-4 h-4 text-primary" />
+            <span>Split the Fare Calculator</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-normal">
+            Purely local helper. Check the estimated fare in the cab app and enter it here to calculate each person's share.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                Estimated Fare (₹)
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="10"
+                placeholder="e.g. 250"
+                value={calculatorFare}
+                onChange={(e) => setCalculatorFare(e.target.value)}
+                className="h-8 text-xs"
+                data-testid="input-fare-amount"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                Riders
+              </label>
+              <Input
+                type="number"
+                min="1"
+                max="6"
+                step="1"
+                value={calculatorRiders}
+                onChange={(e) => setCalculatorRiders(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="h-8 text-xs"
+                data-testid="input-fare-riders"
+              />
+            </div>
+          </div>
+
+          {fareNum > 0 && (
+            <div className="bg-background border rounded p-2.5 flex items-center justify-between text-xs mt-2">
+              <span className="text-muted-foreground">Each person pays:</span>
+              <span className="font-bold text-sm text-primary" data-testid="text-per-person-fare">
+                ₹{perPersonAmount}
+              </span>
+            </div>
           )}
         </div>
       </SheetContent>
