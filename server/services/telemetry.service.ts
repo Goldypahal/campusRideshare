@@ -13,7 +13,8 @@ export type EventType =
   | "EMERGENCY_SOS"
   | "SAFETY_INCIDENT_ACKNOWLEDGED"
   | "SAFETY_INCIDENT_RESOLVED"
-  | "SAFETY_INCIDENT_ACCESSED";
+  | "SAFETY_INCIDENT_ACCESSED"
+  | "EXTERNAL_RIDE_HANDOFF";
 
 /**
  * Asynchronously log user telemetry events without blocking main request lifecycle

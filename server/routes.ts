@@ -12,6 +12,7 @@ import requestRouter from "./routes/request.routes";
 import messageRouter from "./routes/message.routes";
 import ratingRouter from "./routes/rating.routes";
 import safetyRouter from "./routes/safety.routes";
+import externalRidesRouter from "./routes/external-rides.routes";
 import { errorHandler } from "./errors";
 
 const JWT_SECRET = env.JWT_SECRET;
@@ -40,6 +41,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api", ratingRouter); // Backward compatibility
   app.use("/api/safety", safetyRouter);
   app.use("/api", safetyRouter); // Backward compatibility for /api/sos
+  app.use("/api/external-rides", externalRidesRouter);
 
   // Central RFC 7807 Problem+JSON Error Handler (Finding 14)
   app.use(errorHandler);
