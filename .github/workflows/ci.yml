@@ -70,7 +70,8 @@ jobs:
 
       - name: Run HTTP Integration & Authorization Tests
         env:
-          JWT_SECRET: ci_test_jwt_secret_key_1234567890
+          DATABASE_URL: postgresql://campusride:campusride_secure_pass@localhost:5432/campusride_db
+          JWT_SECRET: ci_test_jwt_secret_key_1234567890_abcdefgh
         run: npm run test:integration
 
       - name: Run ML Intelligence Pytest Suite

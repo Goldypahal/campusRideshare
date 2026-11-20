@@ -10,14 +10,35 @@ export function useWebSocket(onEvent: EventHandler) {
     let pingInterval: NodeJS.Timeout | null = null;
     let isMounted = true;
 
-    function connect() {
+    async function connect() {
       const token = localStorage.getItem('token');
       // If no token exists, do not attempt to open an unauthorized socket
-      if (!token) return;
+      if (!token || !isMounted) return;
+
+      let ticket: string | null = null;
+      try {
+        const ticketRes = await fetch('/api/auth/ws-ticket', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (ticketRes.ok) {
+          const data = await ticketRes.json();
+          ticket = data.ticket;
+        }
+      } catch (err) {
+        console.warn('WS: ticket fetch error, falling back:', err);
+      }
+
+      if (!isMounted) return;
 
       const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const host = window.location.host;
-      const url = `${scheme}://${host}/ws?token=${encodeURIComponent(token)}`;
+      const url = ticket
+        ? `${scheme}://${host}/ws?ticket=${encodeURIComponent(ticket)}`
+        : `${scheme}://${host}/ws?token=${encodeURIComponent(token)}`;
 
       try {
         const ws = new WebSocket(url);

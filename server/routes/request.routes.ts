@@ -70,9 +70,11 @@ router.get("/my", authenticateToken, async (req: AuthRequest, res: Response, nex
       requests.map(async (request) => {
         const ride = await storage.getRide(request.rideId);
         const driver = ride ? await storage.getUser(ride.driverId) : null;
+        const driverPublic = driver ? { ...driver, password: undefined } : null;
         return {
           ...request,
-          ride: ride ? { ...ride, driver: driver ? { ...driver, password: undefined } : null } : null,
+          ride: ride ? { ...ride, driver: driverPublic } : null,
+          driver: driverPublic, // Preserved at top-level for client my-rides.tsx compatibility
         };
       })
     );
@@ -108,8 +110,8 @@ router.get("/driver/incoming", authenticateToken, async (req: AuthRequest, res: 
   }
 });
 
-// PATCH /api/ride-requests/:id
-router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+// Handler for request status updates (shared by PATCH and POST cancel)
+async function handleUpdateRequest(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const request = await storage.getRideRequest(req.params.id);
     if (!request) return next(new NotFoundError("Request not found"));
@@ -126,18 +128,29 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
     const isDriver = ride.driverId === req.user!.id;
     const isPassenger = request.passengerId === req.user!.id;
 
-    if (status === "accepted" || status === "rejected") {
+    // 1. Rejection state machine checks (Bug 4 fix)
+    if (status === "rejected") {
       if (!isDriver) {
         return res.status(403).json({
           type: "urn:problem:forbidden",
           title: "Forbidden",
           status: 403,
-          detail: "Only the driver can accept or reject requests",
-          message: "Only the driver can accept or reject requests",
+          detail: "Only the driver can reject requests",
+          message: "Only the driver can reject requests",
+        });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Invalid State Transition",
+          status: 400,
+          detail: `Cannot reject request with status '${request.status}'. Only pending requests can be rejected. To terminate an accepted booking, cancel it to restore seats.`,
+          message: `Cannot reject request with status '${request.status}'. Only pending requests can be rejected. To terminate an accepted booking, cancel it to restore seats.`,
         });
       }
     }
 
+    // 2. Cancellation state machine checks
     if (status === "cancelled") {
       if (!isPassenger && !isDriver) {
         return res.status(403).json({
@@ -148,10 +161,62 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
           message: "Not authorized to cancel this request",
         });
       }
+      if (request.status === "cancelled" || request.status === "rejected") {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Invalid State Transition",
+          status: 400,
+          detail: `Request is already ${request.status}`,
+          message: `Request is already ${request.status}`,
+        });
+      }
+
+      // If cancelling an accepted booking, atomically restore seats
+      if (request.status === "accepted") {
+        const cancellation = await storage.cancelRideRequestAtomic(request.id, req.user!.id);
+        if (!cancellation.success) {
+          return res.status(400).json({
+            type: "urn:problem:validation-error",
+            title: "Cancellation Error",
+            status: 400,
+            detail: cancellation.error,
+            message: cancellation.error,
+          });
+        }
+
+        if ((req.app as any).sendToUser) {
+          const notifyUserId = isDriver ? request.passengerId : ride.driverId;
+          (req.app as any).sendToUser(notifyUserId, {
+            type: "ride_request_cancelled",
+            request: cancellation.request,
+            ride: cancellation.ride,
+          });
+        }
+        return res.json(cancellation.request);
+      }
     }
 
-    // Atomic seat allocation via storage transaction method
-    if (status === "accepted" && request.status !== "accepted") {
+    // 3. Acceptance state machine checks
+    if (status === "accepted") {
+      if (!isDriver) {
+        return res.status(403).json({
+          type: "urn:problem:forbidden",
+          title: "Forbidden",
+          status: 403,
+          detail: "Only the driver can accept requests",
+          message: "Only the driver can accept requests",
+        });
+      }
+      if (request.status !== "pending") {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Invalid State Transition",
+          status: 400,
+          detail: `Cannot accept request with status '${request.status}'. Only pending requests can be accepted.`,
+          message: `Cannot accept request with status '${request.status}'. Only pending requests can be accepted.`,
+        });
+      }
+
       const reservation = await storage.acceptRideRequestAtomic(request.id, req.user!.id);
       if (!reservation.success) {
         return res.status(400).json({
@@ -175,21 +240,7 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
       return res.json(reservation.request);
     }
 
-    // Cancellation: restore seats if cancelling an accepted booking
-    if (status === "cancelled" && request.status === "accepted") {
-      const cancellation = await storage.cancelRideRequestAtomic(request.id, req.user!.id);
-      if (!cancellation.success) {
-        return res.status(400).json({
-          type: "urn:problem:validation-error",
-          title: "Cancellation Error",
-          status: 400,
-          detail: cancellation.error,
-          message: cancellation.error,
-        });
-      }
-      return res.json(cancellation.request);
-    }
-
+    // Default status update for pending -> rejected or pending -> cancelled
     const updatedRequest = await storage.updateRideRequest(request.id, { status });
 
     if (status === "rejected") {
@@ -209,6 +260,15 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
   } catch (error: any) {
     next(error);
   }
+}
+
+// PATCH /api/ride-requests/:id
+router.patch("/:id", authenticateToken, handleUpdateRequest);
+
+// POST /api/ride-requests/:id/cancel (Backward compatibility)
+router.post("/:id/cancel", authenticateToken, (req: AuthRequest, res: Response, next: NextFunction) => {
+  req.body = { status: "cancelled" };
+  return handleUpdateRequest(req, res, next);
 });
 
 export default router;

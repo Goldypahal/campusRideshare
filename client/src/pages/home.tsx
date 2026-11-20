@@ -38,14 +38,14 @@ export default function Home() {
     queryKey: ['/api/rides'],
     queryFn: async () => {
       const response = await fetch('/api/rides?limit=3');
-      if (!response.ok) return { rides: [] };
+      if (!response.ok) return { items: [] };
       return response.json();
     },
   });
 
   const activeRides = Array.isArray(activeRidesData)
     ? activeRidesData
-    : (activeRidesData?.rides || []);
+    : (activeRidesData?.items || activeRidesData?.rides || []);
 
   return (
     <div className="parchment-canvas min-h-[calc(100vh-4rem)] pb-16">

@@ -199,12 +199,9 @@ router.post("/verify-email", authRateLimiter, async (req: Request, res: Response
       return next(new ValidationError("Verification token is required"));
     }
 
-    // Lookup token by its SHA-256 hash or raw token (for backwards compatibility)
+    // Lookup token strictly by its SHA-256 hash
     const hashed = hashToken(token);
-    let record = await storage.getVerificationToken(hashed);
-    if (!record) {
-      record = await storage.getVerificationToken(token);
-    }
+    const record = await storage.getVerificationToken(hashed);
 
     if (!record) {
       return res.status(400).json({
@@ -372,6 +369,16 @@ router.patch("/me", authenticateToken, handleProfileUpdate);
 
 // POST /api/auth/ws-ticket (Ticket-based WebSocket Authentication)
 const wsTickets = new Map<string, { userId: string; expiresAt: number }>();
+
+// Periodic cleanup of expired ws tickets
+setInterval(() => {
+  const now = Date.now();
+  for (const [ticket, record] of wsTickets.entries()) {
+    if (now > record.expiresAt) {
+      wsTickets.delete(ticket);
+    }
+  }
+}, 60000).unref();
 export function validateWsTicket(ticket: string): string | null {
   const record = wsTickets.get(ticket);
   if (!record) return null;

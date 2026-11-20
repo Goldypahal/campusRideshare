@@ -149,15 +149,23 @@ export function formatError(err: unknown, req?: Request): ProblemDetails {
 
   const errorObj = err as any;
   const status = typeof errorObj?.status === "number" ? errorObj.status : 500;
-  const detail = errorObj?.message || "An unexpected internal server error occurred.";
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (status >= 500) {
+    console.error("[InternalServerError]", err);
+  }
+
+  const detail = (status >= 500 && isProduction)
+    ? "An unexpected internal server error occurred."
+    : (errorObj?.message || "An unexpected internal server error occurred.");
 
   return {
-    type: "urn:problem:internal-server-error",
-    title: status === 500 ? "Internal Server Error" : "Error",
+    type: status >= 500 ? "urn:problem:internal-server-error" : "urn:problem:error",
+    title: status >= 500 ? "Internal Server Error" : "Error",
     status,
     detail,
     instance,
-    code: errorObj?.code || (status === 500 ? "INTERNAL_ERROR" : "ERROR"),
+    code: errorObj?.code || (status >= 500 ? "INTERNAL_ERROR" : "ERROR"),
     message: detail,
   };
 }

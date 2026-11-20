@@ -23,8 +23,21 @@ export function validateEnv(): Env {
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL is required in production environment. MemStorage fallback is disabled in production.");
     }
-    if (!process.env.JWT_SECRET || process.env.JWT_SECRET === "dev-fallback-secret-key-campus-rideshare") {
-      throw new Error("A secure custom JWT_SECRET is required in production environment.");
+    const insecureSecrets = new Set([
+      "dev-fallback-secret-key-campus-rideshare",
+      "production_secure_jwt_secret_change_in_env",
+      "secret",
+      "jwt_secret",
+      "changeme",
+    ]);
+    if (
+      !process.env.JWT_SECRET ||
+      process.env.JWT_SECRET.length < 32 ||
+      insecureSecrets.has(process.env.JWT_SECRET)
+    ) {
+      throw new Error(
+        "A strong, unique JWT_SECRET (at least 32 characters, non-default) is strictly required in production."
+      );
     }
   }
 

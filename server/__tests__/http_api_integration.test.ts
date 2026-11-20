@@ -368,6 +368,16 @@ async function runHttpApiIntegrationTests() {
     });
     assert.strictEqual(accept2RetryRes.status, 200, "Passenger 2 can now be accepted after seats restored");
 
+    // Driver Alice cannot reject Passenger 2 now that they are accepted (Bug 4 fix)
+    const rejectAcceptedRes = await testFetch(`/api/ride-requests/${req2.id}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${driverToken}`,
+      },
+      body: { status: "rejected" },
+    });
+    assert.strictEqual(rejectAcceptedRes.status, 400, "Driver cannot reject an already accepted booking");
+
     // Verify ride is now marked full (0 seats available)
     const updatedRideRes = await testFetch(`/api/rides/${rideId}`, {
       headers: { Authorization: `Bearer ${driverToken}` },
@@ -442,6 +452,14 @@ async function runHttpApiIntegrationTests() {
     });
     assert.strictEqual(completeRideRes.status, 200, "Driver marks ride completed");
 
+    // Bug 5 fix: Completed ride cannot transition back to active (farming prevention)
+    const farmRideRes = await testFetch(`/api/rides/${rideId}/status`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${driverToken}` },
+      body: { status: "active" },
+    });
+    assert.strictEqual(farmRideRes.status, 400, "Completed ride cannot transition back to active");
+
     // Passenger Carol rates Driver Alice -> 201 Created
     const validRateRes = await testFetch("/api/ratings", {
       method: "POST",
@@ -489,12 +507,30 @@ async function runHttpApiIntegrationTests() {
     console.log("  ✅ Passed: Rating completion requirements, co-participant checks & duplicate prevention verified.");
 
     // ----------------------------------------------------
-    // 6. User Stats, Profile Updates & WS Ticket Generation (Findings 6 & 9)
+    // 6. User Stats, Profile Privacy & WS Ticket Generation (Findings 6 & 9)
     // ----------------------------------------------------
     console.log("  [6] Testing User Stats, Profile API & WS Tickets...");
 
-    // Test GET /api/users/:id/stats
-    const statsRes = await testFetch(`/api/users/${driverUser.id}/stats`);
+    // Bug 6 fix: GET /api/users/:id without token must be rejected (401)
+    const unauthProfileRes = await testFetch(`/api/users/${driverUser.id}`);
+    assert.strictEqual(unauthProfileRes.status, 401, "Unauthenticated profile access must be denied");
+
+    // Bug 6 fix: GET /api/users/:id by other user must hide sensitive personal data
+    const strangerProfileRes = await testFetch(`/api/users/${driverUser.id}`, {
+      headers: { Authorization: `Bearer ${p2Token}` },
+    });
+    assert.strictEqual(strangerProfileRes.status, 200, "Authenticated user can view driver public profile");
+    const strangerProfile = await strangerProfileRes.json();
+    assert.strictEqual(strangerProfile.email, undefined, "Personal email must not be leaked to other users");
+    assert.strictEqual(strangerProfile.gender, undefined, "Personal gender must not be leaked to other users");
+    assert.strictEqual(strangerProfile.housingZone, undefined, "Personal housing zone must not be leaked to other users");
+    assert.strictEqual(strangerProfile.role, undefined, "Internal role must not be leaked to other users");
+    assert.strictEqual(strangerProfile.fullName, "Driver Alice");
+
+    // Test GET /api/users/:id/stats (Authenticated)
+    const statsRes = await testFetch(`/api/users/${driverUser.id}/stats`, {
+      headers: { Authorization: `Bearer ${driverToken}` },
+    });
     assert.strictEqual(statsRes.status, 200, "Stats endpoint must succeed");
     const stats = await statsRes.json();
     assert.ok(stats.totalRides !== undefined, "Stats contains totalRides");

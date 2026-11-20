@@ -34,7 +34,7 @@ export interface SmartMatchResult {
   breakdown: MatchBreakdown;
 }
 
-const PYTHON_ML_URL = process.env.PYTHON_ML_SERVICE_URL || "http://127.0.0.1:8000";
+const PYTHON_ML_URL = process.env.ML_SERVICE_URL || process.env.PYTHON_ML_SERVICE_URL || "http://127.0.0.1:8000";
 
 /**
  * Calculates multi-factor spatial & temporal match score between a user query and a ride/driver

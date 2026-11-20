@@ -133,8 +133,8 @@ router.get("/:id", async (req: AuthRequest, res: Response, next: NextFunction) =
   }
 });
 
-// PATCH /api/rides/:id (Lifecycle State Machine & Guarded Transitions)
-router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+// PATCH /api/rides/:id and /api/rides/:id/status (Lifecycle State Machine & Guarded Transitions)
+async function handleRideUpdate(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const ride = await storage.getRide(req.params.id);
     if (!ride) return next(new NotFoundError("Ride not found"));
@@ -149,9 +149,27 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
       return next(new ValidationError(`Invalid status. Allowed: ${allowedStatuses.join(", ")}`));
     }
 
-    // Guard: Prevent completing an already cancelled ride
-    if (status === "completed" && ride.status === "cancelled") {
-      return next(new ValidationError("Cannot mark a cancelled ride as completed"));
+    // Strict Terminal State Guards (Bug 5 fix: prevent completion farming & un-cancelling)
+    if (status && status !== ride.status) {
+      if (ride.status === "completed") {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Terminal State",
+          status: 400,
+          detail: "Ride is already completed and cannot be transitioned to another status.",
+          message: "Ride is already completed and cannot be transitioned to another status.",
+        });
+      }
+
+      if (ride.status === "cancelled") {
+        return res.status(400).json({
+          type: "urn:problem:validation-error",
+          title: "Terminal State",
+          status: 400,
+          detail: "Ride is already cancelled and cannot be reactivated or modified.",
+          message: "Ride is already cancelled and cannot be reactivated or modified.",
+        });
+      }
     }
 
     // Cascade cancellation: If driver cancels the ride, automatically cancel all associated bookings
@@ -226,6 +244,9 @@ router.patch("/:id", authenticateToken, async (req: AuthRequest, res: Response, 
   } catch (error: any) {
     next(error);
   }
-});
+}
+
+router.patch("/:id", authenticateToken, handleRideUpdate);
+router.patch("/:id/status", authenticateToken, handleRideUpdate);
 
 export default router;

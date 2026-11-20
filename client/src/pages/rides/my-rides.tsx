@@ -197,7 +197,7 @@ export default function MyRides() {
                         </span>
                       </div>
                       <div className="text-sm text-muted-foreground" data-testid={`text-driver-${request.id}`}>
-                        Driver: {request.driver?.fullName}
+                        Driver: {request.driver?.fullName || (request.ride as any)?.driver?.fullName}
                       </div>
                     </div>
                     <Badge className={getStatusColor(request.status)} data-testid={`badge-request-status-${request.id}`}>

@@ -1,7 +1,9 @@
-import express, { type Request, Response, NextFunction } from "express";
+import express, { type Request, Response } from "express";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { serveStatic, log } from "./static";
 import { checkDbConnection } from "./db";
+import { runMigrations } from "./migrate";
+import { storage } from "./storage";
 import { env } from "./env";
 import { randomUUID } from "crypto";
 
@@ -19,20 +21,26 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api") || path === "/health") {
-      const logData = {
-        requestId,
-        method: req.method,
-        path,
-        status: res.statusCode,
-        durationMs: duration,
-        timestamp: new Date().toISOString(),
-      };
+    if (path.startsWith("/api") || path === "/health" || path === "/readyz" || path === "/livez") {
       log(`${req.method} ${path} ${res.statusCode} in ${duration}ms [req:${requestId.slice(0, 8)}]`);
     }
   });
 
   next();
+});
+
+// Liveness & Readiness Probes (WS12)
+app.get("/livez", (_req, res) => {
+  res.status(200).json({ status: "alive", uptime: process.uptime() });
+});
+
+app.get("/readyz", async (_req, res) => {
+  const isDbConnected = await checkDbConnection();
+  if (isDbConnected || !process.env.DATABASE_URL) {
+    res.status(200).json({ status: "ready", database: isDbConnected });
+  } else {
+    res.status(503).json({ status: "unhealthy", database: false });
+  }
 });
 
 // Health Check Endpoints
@@ -60,21 +68,37 @@ app.get("/health", healthHandler);
 app.get("/api/health", healthHandler);
 
 (async () => {
+  // Run pending database migrations on startup if database is configured
+  try {
+    await runMigrations();
+  } catch (err: any) {
+    console.error("Migration execution error:", err.message);
+  }
+
+  // Bootstrap initial campus administrator if specified in environment
+  if (process.env.ADMIN_EMAIL) {
+    try {
+      const admin = await storage.getUserByEmail(process.env.ADMIN_EMAIL);
+      if (admin && admin.role !== "admin") {
+        await storage.updateUser(admin.id, { role: "admin", isVerified: true });
+        console.log(`🛡️ Bootstrapped administrator role for: ${admin.email}`);
+      }
+    } catch (e: any) {
+      console.warn("Could not check initial admin bootstrap:", e.message);
+    }
+  }
+
   const server = await registerRoutes(app);
 
-  // Global Error Handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = env.NODE_ENV === "production" && status === 500
-      ? "An unexpected internal server error occurred"
-      : err.message || "Internal Server Error";
-
-    console.error("❌ Application Error:", err);
-    res.status(status).json({ message, status });
-  });
-
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
+  if (process.env.NODE_ENV === "development") {
+    // Dynamic import prevents vite from being bundled into production runtime
+    try {
+      const { setupVite } = await import("./vite");
+      await setupVite(app, server);
+    } catch (err: any) {
+      console.warn("Vite development server not found, falling back to static files:", err.message);
+      serveStatic(app);
+    }
   } else {
     serveStatic(app);
   }

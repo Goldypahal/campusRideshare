@@ -102,7 +102,9 @@ router.get("/:otherUserId", authenticateToken, async (req: AuthRequest, res: Res
       });
     }
 
-    const messages = await storage.getMessagesBetweenUsers(fromUserId, toUserId);
+    const limit = req.query.limit ? Math.min(Math.max(parseInt(req.query.limit as string, 10) || 50, 1), 100) : 50;
+    const offset = req.query.offset ? Math.max(parseInt(req.query.offset as string, 10) || 0, 0) : 0;
+    const messages = await storage.getMessagesBetweenUsers(fromUserId, toUserId, offset, limit);
     res.json(messages);
   } catch (error: any) {
     next(error);

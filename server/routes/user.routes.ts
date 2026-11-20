@@ -7,7 +7,7 @@ import { NotFoundError } from "../errors";
 const router = Router();
 
 // GET /api/users/:id/stats
-router.get("/:id/stats", async (req: Request, res: Response, next: NextFunction) => {
+router.get("/:id/stats", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.params.id;
     const user = await storage.getUser(userId);
@@ -43,13 +43,32 @@ router.get("/:id/stats", async (req: Request, res: Response, next: NextFunction)
 });
 
 // GET /api/users/:id
-router.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
+router.get("/:id", authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = await storage.getUser(req.params.id);
     if (!user) {
       return next(new NotFoundError("User not found"));
     }
-    res.json({ ...user, password: undefined });
+
+    const isSelfOrAdmin = req.user && (req.user.id === user.id || req.user.role === "admin");
+    if (isSelfOrAdmin) {
+      const { password, ...safeSelf } = user;
+      return res.json(safeSelf);
+    }
+
+    // Public sanitized profile for other authenticated users
+    res.json({
+      id: user.id,
+      fullName: user.fullName,
+      academicYear: user.academicYear,
+      major: user.major,
+      rating: user.rating,
+      totalRides: user.totalRides,
+      completedRidesCount: user.completedRidesCount,
+      trustScore: user.trustScore,
+      isVerified: user.isVerified,
+      createdAt: user.createdAt,
+    });
   } catch (error) {
     next(error);
   }
