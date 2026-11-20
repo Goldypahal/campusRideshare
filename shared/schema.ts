@@ -153,6 +153,22 @@ export const safetyIncidents = pgTable("safety_incidents", {
   };
 });
 
+// External ride-hailing fallback handoff audit trail (Stage 1)
+// Note: Location coordinates/addresses are intentionally excluded for data minimization
+export const externalRideHandoffs = pgTable("external_ride_handoffs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  providerId: text("provider_id").notNull(), // 'uber' | 'ola' | 'rapido'
+  reason: text("reason").notNull(),          // 'no_match' | 'low_match' | 'too_soon' | 'manual'
+  hadPickupCoords: boolean("had_pickup_coords").notNull(),
+  hadDropoffCoords: boolean("had_dropoff_coords").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => {
+  return {
+    userCreatedAtIdx: index("external_ride_handoffs_user_created_idx").on(table.userId, table.createdAt),
+  };
+});
+
 export function isValidUniversityEmail(email: string): boolean {
   if (!email || !email.includes("@")) return false;
   const domain = email.split("@")[1].toLowerCase();
@@ -266,6 +282,11 @@ export const insertRideEventSchema = createInsertSchema(rideEvents).omit({
   createdAt: true,
 });
 
+export const insertExternalRideHandoffSchema = createInsertSchema(externalRideHandoffs).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -287,6 +308,8 @@ export type InsertSafetyIncident = z.infer<typeof insertSafetyIncidentSchema>;
 export type SafetyIncident = typeof safetyIncidents.$inferSelect;
 export type InsertVerificationToken = z.infer<typeof insertVerificationTokenSchema>;
 export type VerificationToken = typeof verificationTokens.$inferSelect;
+export type InsertExternalRideHandoff = z.infer<typeof insertExternalRideHandoffSchema>;
+export type ExternalRideHandoff = typeof externalRideHandoffs.$inferSelect;
 export type LoginData = z.infer<typeof loginSchema>;
 export type UpdateProfileData = z.infer<typeof updateProfileSchema>;
 export type UpdateUserRoleData = z.infer<typeof updateUserRoleSchema>;

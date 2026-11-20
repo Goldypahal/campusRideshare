@@ -15,6 +15,8 @@ import {
   type InsertVerificationToken,
   type SafetyIncident,
   type InsertSafetyIncident,
+  type ExternalRideHandoff,
+  type InsertExternalRideHandoff,
   users,
   rides,
   rideRequests,
@@ -23,6 +25,7 @@ import {
   rideEvents,
   verificationTokens,
   safetyIncidents,
+  externalRideHandoffs,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, or, and, asc, desc, gt, gte, sql } from "drizzle-orm";
@@ -121,6 +124,10 @@ export interface IStorage {
   getSafetyIncident(id: string): Promise<SafetyIncident | undefined>;
   updateSafetyIncident(id: string, updateData: Partial<SafetyIncident>): Promise<SafetyIncident | undefined>;
   listActiveIncidents(): Promise<SafetyIncident[]>;
+
+  // External Ride Handoff methods
+  createExternalRideHandoff(handoff: InsertExternalRideHandoff): Promise<ExternalRideHandoff>;
+  getExternalRideHandoffsByUser(userId: string): Promise<ExternalRideHandoff[]>;
 }
 
 export class TransactionError extends Error {
@@ -673,6 +680,21 @@ export class DatabaseStorage implements IStorage {
     if (!db) return [];
     return db.select().from(safetyIncidents).where(eq(safetyIncidents.status, "active")).orderBy(desc(safetyIncidents.createdAt));
   }
+
+  async createExternalRideHandoff(data: InsertExternalRideHandoff): Promise<ExternalRideHandoff> {
+    if (!db) throw new Error("Database not connected");
+    const [record] = await db.insert(externalRideHandoffs).values(data).returning();
+    return record;
+  }
+
+  async getExternalRideHandoffsByUser(userId: string): Promise<ExternalRideHandoff[]> {
+    if (!db) return [];
+    return db
+      .select()
+      .from(externalRideHandoffs)
+      .where(eq(externalRideHandoffs.userId, userId))
+      .orderBy(desc(externalRideHandoffs.createdAt));
+  }
 }
 
 export class MemStorage implements IStorage {
@@ -684,6 +706,7 @@ export class MemStorage implements IStorage {
   private rideEventsMap: Map<string, RideEvent>;
   private tokensMap: Map<string, VerificationToken>;
   private incidentsMap: Map<string, SafetyIncident>;
+  private externalRideHandoffsMap: Map<string, ExternalRideHandoff>;
 
   constructor() {
     this.users = new Map();
@@ -694,6 +717,7 @@ export class MemStorage implements IStorage {
     this.rideEventsMap = new Map();
     this.tokensMap = new Map();
     this.incidentsMap = new Map();
+    this.externalRideHandoffsMap = new Map();
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -1186,6 +1210,23 @@ export class MemStorage implements IStorage {
   async listActiveIncidents(): Promise<SafetyIncident[]> {
     return Array.from(this.incidentsMap.values())
       .filter(i => i.status === "active")
+      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+  }
+
+  async createExternalRideHandoff(data: InsertExternalRideHandoff): Promise<ExternalRideHandoff> {
+    const id = randomUUID();
+    const record: ExternalRideHandoff = {
+      ...data,
+      id,
+      createdAt: new Date(),
+    };
+    this.externalRideHandoffsMap.set(id, record);
+    return record;
+  }
+
+  async getExternalRideHandoffsByUser(userId: string): Promise<ExternalRideHandoff[]> {
+    return Array.from(this.externalRideHandoffsMap.values())
+      .filter((h) => h.userId === userId)
       .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
   }
 }
