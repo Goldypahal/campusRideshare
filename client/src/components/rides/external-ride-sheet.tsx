@@ -68,6 +68,10 @@ export function ExternalRideSheet({
     enabled: open && isAuthenticated(),
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/external-rides/providers");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || "Failed to load external ride providers");
+      }
       return res.json();
     },
   });
@@ -131,6 +135,11 @@ export function ExternalRideSheet({
           reason,
         },
       });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || `Request failed with status ${res.status}`);
+      }
 
       return res.json();
     },
