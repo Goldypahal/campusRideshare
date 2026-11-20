@@ -11,6 +11,7 @@ import { useLocation } from "wouter";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { RideCardSkeleton } from "@/components/ui/skeleton-loaders";
 import { Sparkles, Car } from "lucide-react";
+import { ExternalRideSheet } from "@/components/rides/external-ride-sheet";
 
 export default function SearchRides() {
   const [, navigate] = useLocation();
@@ -41,6 +42,20 @@ export default function SearchRides() {
     verifiedOnly: true,
   });
   const [sortBy, setSortBy] = useState<"match" | "time">("match");
+  const [isExternalSheetOpen, setIsExternalSheetOpen] = useState(false);
+  const [externalFallbackReason, setExternalFallbackReason] = useState<"no_match" | "low_match" | "too_soon" | "manual">("manual");
+
+  const { data: externalProvidersData } = useQuery<{
+    providers: Array<{ id: string; displayName: string }>;
+    settings: { matchThreshold: number; soonMinutes: number };
+  }>({
+    queryKey: ['/api/external-rides/providers'],
+    enabled: isAuthenticated(),
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/external-rides/providers");
+      return res.json();
+    },
+  });
 
   const { data: currentUser } = useQuery({
     queryKey: ['/api/auth/me'],
@@ -149,6 +164,32 @@ export default function SearchRides() {
       })
     : filteredRides;
 
+  // External ride fallback recommendation logic
+  const matchThreshold = externalProvidersData?.settings?.matchThreshold ?? 60;
+  const soonMinutesThreshold = externalProvidersData?.settings?.soonMinutes ?? 45;
+  const hasExternalProviders = (externalProvidersData?.providers?.length ?? 0) > 0;
+
+  const noRidesFound = !isLoading && sortedRides.length === 0;
+  const bestMatchScore = sortedRides.length > 0
+    ? Math.max(...sortedRides.map((r: any) => r.matchPercentage ?? r.matchScore ?? 0))
+    : 0;
+  const isLowMatch = !isLoading && sortedRides.length > 0 && bestMatchScore > 0 && bestMatchScore < matchThreshold;
+
+  let isDepartureSoon = false;
+  if (filters.date && filters.time) {
+    try {
+      const departureDateTime = new Date(`${filters.date}T${filters.time}`);
+      const now = new Date();
+      const diffMinutes = (departureDateTime.getTime() - now.getTime()) / (1000 * 60);
+      if (diffMinutes > 0 && diffMinutes <= soonMinutesThreshold) {
+        isDepartureSoon = true;
+      }
+    } catch (e) {}
+  }
+
+  const shouldSuggestExternal = hasExternalProviders && (isLowMatch || isDepartureSoon);
+  const bannerReason = isDepartureSoon ? "too_soon" : "low_match";
+
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <SearchFilters onSearch={handleSearch} />
@@ -197,6 +238,35 @@ export default function SearchRides() {
           </div>
         </div>
 
+        {shouldSuggestExternal && (
+          <div
+            className="bg-card border rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
+            data-testid="banner-external-recommendation"
+          >
+            <div>
+              <div className="font-semibold text-sm">
+                {isDepartureSoon ? "Leaving soon? Cab & auto options available" : "Low campus match? External rides available"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {isDepartureSoon
+                  ? `Your scheduled departure is within ${soonMinutesThreshold} minutes. Check cabs if no driver confirms in time.`
+                  : `Top campus match is ${bestMatchScore}%, below the ${matchThreshold}% threshold. Book with an external provider.`}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setExternalFallbackReason(bannerReason);
+                setIsExternalSheetOpen(true);
+              }}
+              data-testid="button-open-external-banner"
+            >
+              Book with Uber, Ola or Rapido
+            </Button>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-4">
             <RideCardSkeleton />
@@ -210,9 +280,23 @@ export default function SearchRides() {
             <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4" data-testid="text-no-rides">
               Try expanding your search parameters or check back soon as campus drivers post new routes daily.
             </p>
-            <Button variant="outline" onClick={() => navigate("/offer")}>
-              Post a Ride Offer
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+              <Button variant="outline" onClick={() => navigate("/offer")}>
+                Post a Ride Offer
+              </Button>
+              {hasExternalProviders && (
+                <Button
+                  variant="default"
+                  onClick={() => {
+                    setExternalFallbackReason("no_match");
+                    setIsExternalSheetOpen(true);
+                  }}
+                  data-testid="button-book-external-empty"
+                >
+                  Book with Uber, Ola or Rapido
+                </Button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -228,6 +312,29 @@ export default function SearchRides() {
           </div>
         )}
       </section>
+
+      {/* Manual fallback in page footer */}
+      <footer className="pt-8 border-t text-center">
+        <button
+          type="button"
+          onClick={() => {
+            setExternalFallbackReason("manual");
+            setIsExternalSheetOpen(true);
+          }}
+          className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
+          data-testid="link-external-fallback-footer"
+        >
+          Book with another app (Uber, Ola, Rapido)
+        </button>
+      </footer>
+
+      <ExternalRideSheet
+        open={isExternalSheetOpen}
+        onOpenChange={setIsExternalSheetOpen}
+        pickupLabel={filters.origin}
+        dropoffLabel={filters.destination}
+        reason={externalFallbackReason}
+      />
     </main>
   );
 }
